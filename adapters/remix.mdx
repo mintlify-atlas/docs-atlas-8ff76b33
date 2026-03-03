@@ -1,0 +1,320 @@
+---
+title: Remix Adapter
+description: Setup and configure nuqs for Remix applications
+---
+
+The Remix adapter enables nuqs to work seamlessly with Remix v2 applications.
+
+## Installation
+
+<Steps>
+  <Step title="Install nuqs">
+    Install nuqs in your Remix project:
+
+    ```bash
+    npm install nuqs
+    ```
+
+    ```bash
+    pnpm add nuqs
+    ```
+
+    ```bash
+    yarn add nuqs
+    ```
+  </Step>
+
+  <Step title="Add the adapter to your root">
+    Wrap your application with `NuqsAdapter` in your root component:
+
+    ```tsx title="app/root.tsx"
+    import { Links, Meta, Scripts, ScrollRestoration, Outlet } from '@remix-run/react'
+import { NuqsAdapter } from 'nuqs/adapters/remix'
+
+export function Layout({ children }: { children: React.ReactNode }) {
+  return (
+    <html lang="en">
+      <head>
+        <meta charSet="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <Meta />
+        <Links />
+      </head>
+      <body>
+        {children}
+        <ScrollRestoration />
+        <Scripts />
+      </body>
+    </html>
+  )
+}
+
+export default function App() {
+  return (
+    <NuqsAdapter>
+      <Outlet />
+    </NuqsAdapter>
+  )
+}
+    ```
+
+    <Note>
+      The `NuqsAdapter` should wrap the `<Outlet />` component to provide context to all routes.
+    </Note>
+  </Step>
+
+  <Step title="Use nuqs hooks in your routes">
+    Now you can use `useQueryState` and `useQueryStates` in any route component:
+
+    ```tsx title="app/routes/search.tsx"
+    import { useQueryState } from 'nuqs'
+
+export default function SearchRoute() {
+  const [search, setSearch] = useQueryState('q')
+
+  return (
+    <div>
+      <input
+        value={search || ''}
+        onChange={(e) => setSearch(e.target.value)}
+        placeholder="Search..."
+      />
+      <p>Search query: {search || 'none'}</p>
+    </div>
+  )
+}
+    ```
+  </Step>
+</Steps>
+
+## Version Requirements
+
+- **Remix**: `@remix-run/react@>=2`
+- **React**: `>=18.2.0` or `^19.0.0-0`
+
+## Features
+
+### Integration with Remix Navigation
+
+The adapter uses Remix's `useNavigate()` and `useSearchParams()` hooks under the hood, providing seamless integration with Remix's routing system.
+
+### Optimistic UI Updates
+
+Use `useOptimisticSearchParams` for optimistic UI updates:
+
+```tsx
+import { useOptimisticSearchParams } from 'nuqs/adapters/remix'
+
+export default function OptimisticRoute() {
+  const searchParams = useOptimisticSearchParams()
+  const query = searchParams.get('q')
+  
+  return <div>Optimistic query: {query}</div>
+}
+```
+
+This hook returns the search params that will be applied after pending navigation completes.
+
+### Shallow Updates
+
+By default, URL updates in client components are shallow (client-side only):
+
+```tsx
+const [state, setState] = useQueryState('key')
+// Shallow update - no loader re-run
+```
+
+To trigger loader re-runs, use `shallow: false`:
+
+```tsx
+const [state, setState] = useQueryState('key', { shallow: false })
+// This will cause the route's loader to re-run
+```
+
+## Server-Side Usage
+
+### Reading Search Params in Loaders
+
+Use `createLoader` to parse search params in Remix loaders:
+
+```tsx title="app/routes/products.tsx"
+import { json, type LoaderFunctionArgs } from '@remix-run/node'
+import { useLoaderData } from '@remix-run/react'
+import { createLoader, parseAsInteger, parseAsString } from 'nuqs/server'
+
+const searchParams = {
+  q: parseAsString,
+  page: parseAsInteger.withDefault(1)
+}
+
+const loadSearchParams = createLoader(searchParams)
+
+export async function loader({ request }: LoaderFunctionArgs) {
+  const { q, page } = loadSearchParams(new URL(request.url).searchParams)
+  
+  const products = await fetchProducts({ query: q, page })
+  
+  return json({ products, q, page })
+}
+
+export default function ProductsRoute() {
+  const { products, q, page } = useLoaderData<typeof loader>()
+  const [query, setQuery] = useQueryState('q')
+  
+  return (
+    <div>
+      <h1>Products</h1>
+      <p>Query: {q || 'all'}, Page: {page}</p>
+      <input
+        value={query || ''}
+        onChange={(e) => setQuery(e.target.value)}
+      />
+      {/* Render products */}
+    </div>
+  )
+}
+```
+
+### Reading from URL in Loaders
+
+You can also pass the full URL or Request object:
+
+```tsx
+export async function loader({ request }: LoaderFunctionArgs) {
+  // Pass the Request object directly
+  const { q, page } = loadSearchParams(request)
+  
+  // Or pass the URL
+  const params = loadSearchParams(new URL(request.url))
+  
+  // ...
+}
+```
+
+## How It Works
+
+The Remix adapter:
+
+1. Uses Remix's `useSearchParams()` to read current search params
+2. Uses Remix's `useNavigate()` to update the URL
+3. Automatically handles route transitions and navigation
+4. Provides optimistic updates through `useOptimisticSearchParams()`
+
+## Examples
+
+### Pagination
+
+```tsx title="app/routes/blog.tsx"
+import { useQueryState, parseAsInteger } from 'nuqs'
+import { json, type LoaderFunctionArgs } from '@remix-run/node'
+import { useLoaderData } from '@remix-run/react'
+
+export async function loader({ request }: LoaderFunctionArgs) {
+  const url = new URL(request.url)
+  const page = parseInt(url.searchParams.get('page') || '1')
+  
+  const posts = await fetchPosts({ page, limit: 10 })
+  
+  return json({ posts, page })
+}
+
+export default function BlogRoute() {
+  const { posts } = useLoaderData<typeof loader>()
+  const [page, setPage] = useQueryState('page', parseAsInteger.withDefault(1))
+
+  return (
+    <div>
+      <h1>Blog Posts</h1>
+      <div>{/* Render posts */}</div>
+      <div>
+        <button
+          onClick={() => setPage(page - 1)}
+          disabled={page <= 1}
+        >
+          Previous
+        </button>
+        <span>Page {page}</span>
+        <button onClick={() => setPage(page + 1)}>
+          Next
+        </button>
+      </div>
+    </div>
+  )
+}
+```
+
+### Multiple Filters
+
+```tsx title="app/routes/products.tsx"
+import { useQueryStates, parseAsString, parseAsStringEnum } from 'nuqs'
+
+enum SortOrder {
+  Newest = 'newest',
+  PriceLowToHigh = 'price-asc',
+  PriceHighToLow = 'price-desc'
+}
+
+export default function ProductsRoute() {
+  const [filters, setFilters] = useQueryStates({
+    category: parseAsString,
+    sort: parseAsStringEnum<SortOrder>(Object.values(SortOrder))
+      .withDefault(SortOrder.Newest)
+  })
+
+  return (
+    <div>
+      <select
+        value={filters.category || ''}
+        onChange={(e) => setFilters({ category: e.target.value || null })}
+      >
+        <option value="">All Categories</option>
+        <option value="electronics">Electronics</option>
+        <option value="clothing">Clothing</option>
+      </select>
+      
+      <select
+        value={filters.sort}
+        onChange={(e) => setFilters({ sort: e.target.value as SortOrder })}
+      >
+        <option value={SortOrder.Newest}>Newest</option>
+        <option value={SortOrder.PriceLowToHigh}>Price: Low to High</option>
+        <option value={SortOrder.PriceHighToLow}>Price: High to Low</option>
+      </select>
+    </div>
+  )
+}
+```
+
+## Troubleshooting
+
+### Adapter not found error
+
+Make sure you're importing from the correct adapter path:
+
+```tsx
+// ✅ Correct
+import { NuqsAdapter } from 'nuqs/adapters/remix'
+
+// ❌ Wrong
+import { NuqsAdapter } from 'nuqs/adapters/react'
+```
+
+### Loaders not re-running
+
+To trigger loader re-runs, explicitly set `shallow: false`:
+
+```tsx
+setState('value', { shallow: false })
+```
+
+### Type errors with Remix
+
+Ensure you have compatible versions:
+- `@remix-run/react@>=2`
+- `react@>=18.2.0`
+
+Update your dependencies if needed:
+
+```bash
+pnpm update @remix-run/react react
+```

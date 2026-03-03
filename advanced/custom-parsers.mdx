@@ -1,0 +1,266 @@
+---
+title: Custom Parsers
+description: Creating custom parsers with createParser for custom data types and pretty URLs
+---
+
+You may wish to customise the rendered query string for your data type.
+For this, `nuqs` exposes the `createParser{:ts}` function to make your own parsers.
+
+## Creating a parser
+
+You pass `createParser{:ts}` two required functions:
+
+1. `parse{:ts}`: a function that takes a string and returns the parsed value, or `null{:ts}` if invalid.
+2. `serialize{:ts}`: a function that takes the parsed value and returns a string.
+
+```ts
+import { createParser } from 'nuqs'
+
+const parseAsStarRating = createParser({
+  parse(queryValue) {
+    const inBetween = queryValue.split('★')
+    const isValid = inBetween.length > 1 && inBetween.every(s => s === '')
+    if (!isValid) return null
+    const numStars = inBetween.length - 1
+    return Math.min(5, numStars)
+  },
+  serialize(value) {
+    return Array.from({length: value}, () => '★').join('')
+  }
+})
+
+// Usage:
+const [rating, setRating] = useQueryState('rating', parseAsStarRating)
+// URL: ?rating=★★★ (3 stars)
+```
+
+<Note>
+The `parse{:ts}` function should always return `null{:ts}` for invalid inputs.
+Never throw an error from the parse function.
+</Note>
+
+## Hex color parser example
+
+Here's a practical example of a parser that handles hex color values:
+
+```ts
+import { createParser, parseAsHex } from 'nuqs'
+
+// Wrapping your parser/serializer in `createParser`
+// gives it access to the builder pattern & server-side
+// parsing capabilities:
+const hexColorSchema = createParser({
+  parse(query) {
+    if (query.length !== 6) {
+      return null // always return null for invalid inputs
+    }
+    return {
+      // When composing other parsers, they may return null too.
+      r: parseAsHex.parse(query.slice(0, 2)) ?? 0x00,
+      g: parseAsHex.parse(query.slice(2, 4)) ?? 0x00,
+      b: parseAsHex.parse(query.slice(4)) ?? 0x00
+    }
+  },
+  serialize({ r, g, b }) {
+    return (
+      parseAsHex.serialize(r) +
+      parseAsHex.serialize(g) +
+      parseAsHex.serialize(b)
+    )
+  }
+})
+  // Eg: set common options directly
+  .withOptions({ history: 'push' })
+
+// Or on usage:
+const [color, setColor] = useQueryState(
+  'color',
+  hexColorSchema.withDefault({
+    r: 0x66,
+    g: 0x33,
+    b: 0x99
+  })
+)
+// URL: ?color=663399
+```
+
+## Equality function
+
+For state types that can't be compared by the `==={:ts}` operator, you'll need to
+provide an `eq{:ts}` function as well:
+
+```ts
+// Eg: TanStack Table sorting state
+// /?sort=foo:asc → { id: 'foo', desc: false }
+const parseAsSort = createParser({
+  parse(query) {
+    const [key = '', direction = ''] = query.split(':')
+    const desc = parseAsStringLiteral(['asc', 'desc']).parse(direction) ?? 'asc'
+    return {
+      id: key,
+      desc: desc === 'desc'
+    }
+  },
+  serialize(value) {
+    return `${value.id}:${value.desc ? 'desc' : 'asc'}`
+  },
+  eq(a, b) {
+    return a.id === b.id && a.desc === b.desc
+  }
+})
+```
+
+This is used for the [`clearOnDefault{:ts}`](/concepts/options#clear-on-default) option,
+to check if the current value is equal to the default value.
+
+## Multi Parsers
+
+The parsers we've seen until now are `SingleParsers{:ts}`: they operate on **the first occurence** of the
+key in the URL, and give you a string value to parse when it's available.
+
+`MultiParsers{:ts}` work similar to `SingleParsers{:ts}`, except that they operate on arrays, to support **key repetition**:
+
+```
+?tag=type-safe&tag=url-state&tag=react
+```
+
+This means:
+
+1. `parse{:ts}` takes an `Array<string>{:ts}`. It receives all matching values of the key it operates on, and returns the parsed value, or `null{:ts}` if invalid.
+2. `serialize{:ts}` takes the parsed value and returns an `Array<string>{:ts}`, where each item will be separately added to the URL.
+
+You can then compose & reduce this array to form **complex data types**:
+
+```tsx
+import { createMultiParser, createParser, parseAsInteger } from 'nuqs'
+
+/**
+ * 100~200 <=> { gte: 100, lte: 200 }
+ * 150     <=> { eq: 150 }
+ */
+const parseAsFromTo = createParser({
+  parse: value => {
+    const [min = null, max = null] = value.split('~').map(parseAsInteger.parse)
+    if (min === null) return null
+    if (max === null) return { eq: min }
+    return { gte: min, lte: max }
+  },
+  serialize: value => {
+    return value.eq !== undefined ? String(value.eq) : `${value.gte}~${value.lte}`
+  }
+})
+
+/**
+ * foo:bar <=> { key: 'foo', value: 'bar' }
+ */
+const parseAsKeyValue = createParser({
+  parse: value => {
+    const [key, val] = value.split(':')
+    if (!key || !val) return null
+    return { key, value: val }
+  },
+  serialize: value => {
+    return `${value.key}:${value.value}`
+  }
+})
+
+const parseAsFilters = <TItem extends {}>(itemParser: SingleParser<TItem>) => {
+  return createMultiParser({
+    parse: values => {
+      const keyValue = values.map(parseAsKeyValue.parse).filter(v => v !== null)
+
+      const result = Object.fromEntries(
+        keyValue.flatMap(({ key, value }) => {
+          const parsedValue: TItem | null = itemParser.parse(value)
+          return parsedValue === null ? [] : [[key, parsedValue]]
+        })
+      )
+
+      return Object.keys(result).length === 0 ? null : result
+    },
+    serialize: values => {
+      return Object.entries(values).map(([key, value]) => {
+        if (!itemParser.serialize) return null
+        return parseAsKeyValue.serialize({ key, value: itemParser.serialize(value) })
+      }).filter(v => v !== null)
+    }
+  })
+}
+
+const [filters, setFilters] = useQueryState(
+  'filters',
+  parseAsFilters(parseAsFromTo).withDefault({})
+)
+// URL: ?filters=price:100~200&filters=rating:5
+```
+
+## Builder pattern
+
+Parsers created with `createParser{:ts}` have access to the builder pattern,
+allowing you to chain configuration methods:
+
+```ts
+const myParser = createParser({
+  parse: (value) => /* ... */,
+  serialize: (value) => /* ... */
+})
+  .withDefault(defaultValue)
+  .withOptions({
+    history: 'push',
+    shallow: false
+  })
+```
+
+## Testing custom parsers
+
+Parsers should be **bijective**: `parse(serialize(x)) === x{:ts}` and `serialize(parse(x)) === x{:ts}`.
+
+To help test bijectivity, you can use helpers defined in `nuqs/testing`:
+
+```ts
+import {
+  isParserBijective,
+  testParseThenSerialize,
+  testSerializeThenParse
+} from 'nuqs/testing'
+
+it('is bijective', () => {
+  // Passing tests return true
+  expect(isParserBijective(parseAsInteger, '42', 42)).toBe(true)
+  // Failing test throws an error
+  expect(() => isParserBijective(parseAsInteger, '42', 47)).toThrowError()
+
+  // You can also test either side separately:
+  expect(testParseThenSerialize(parseAsInteger, '42')).toBe(true)
+  expect(testSerializeThenParse(parseAsInteger, 42)).toBe(true)
+  // Those will also throw an error if the test fails,
+  // which makes it easier to isolate which side failed:
+  expect(() => testParseThenSerialize(parseAsInteger, 'not a number')).toThrowError()
+  expect(() => testSerializeThenParse(parseAsInteger, NaN)).toThrowError()
+})
+```
+
+<Warning>
+### Lossy serializers
+
+If your serializer loses precision or doesn't accurately represent
+the underlying state value, you will lose this precision when
+reloading the page or restoring state from the URL (eg: on navigation).
+
+Example:
+
+```ts
+const geoCoordParser = {
+  parse: parseFloat,
+  serialize: v => v.toFixed(4) // Loses precision
+}
+
+const [lat, setLat] = useQueryState('lat', geoCoordParser)
+```
+
+Here, setting a latitude of 1.23456789 will render a URL query string
+of `lat=1.2345`, while the internal `lat` state will be correctly
+set to 1.23456789.
+
+Upon reloading the page, the state will be incorrectly set to 1.2345.
+</Warning>

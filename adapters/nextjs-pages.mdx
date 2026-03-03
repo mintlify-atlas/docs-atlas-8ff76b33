@@ -1,0 +1,217 @@
+---
+title: Next.js Pages Router Adapter
+description: Setup and configure nuqs for Next.js Pages Router applications
+---
+
+The Next.js Pages Router adapter enables nuqs to work with Next.js 14.2.0 and above using the Pages Router (the traditional `pages/` directory structure).
+
+## Installation
+
+<Steps>
+  <Step title="Install nuqs">
+    First, install nuqs in your Next.js project:
+
+    ```bash
+    npm install nuqs
+    ```
+
+    ```bash
+    pnpm add nuqs
+    ```
+
+    ```bash
+    yarn add nuqs
+    ```
+  </Step>
+
+  <Step title="Add the adapter to _app.tsx">
+    Wrap your application with the `NuqsAdapter` in your custom App component:
+
+    ```tsx title="pages/_app.tsx"
+    import type { AppProps } from 'next/app'
+import { NuqsAdapter } from 'nuqs/adapters/next/pages'
+
+export default function MyApp({ Component, pageProps }: AppProps) {
+  return (
+    <NuqsAdapter>
+      <Component {...pageProps} />
+    </NuqsAdapter>
+  )
+}
+    ```
+
+    <Note>
+      If you don't have a custom `_app.tsx`, create one following the [Next.js documentation](https://nextjs.org/docs/pages/building-your-application/routing/custom-app).
+    </Note>
+  </Step>
+
+  <Step title="Use nuqs hooks in your pages">
+    Now you can use `useQueryState` and `useQueryStates` in any page component:
+
+    ```tsx title="pages/search.tsx"
+    import { useQueryState } from 'nuqs'
+
+export default function SearchPage() {
+  const [search, setSearch] = useQueryState('q')
+
+  return (
+    <div>
+      <input
+        value={search || ''}
+        onChange={(e) => setSearch(e.target.value)}
+        placeholder="Search..."
+      />
+      <p>Search query: {search || 'none'}</p>
+    </div>
+  )
+}
+    ```
+  </Step>
+</Steps>
+
+## Version Requirements
+
+- **Next.js**: `>=14.2.0`
+- **React**: `>=18.2.0` or `^19.0.0-0`
+
+<Warning>
+  For Next.js versions older than 14.2.0, use nuqs v1.x instead, which doesn't require the adapter setup.
+</Warning>
+
+## Features
+
+### Shallow Updates (Default)
+
+By default, URL updates don't trigger `getServerSideProps` to re-run:
+
+```tsx
+const [state, setState] = useQueryState('key')
+// Shallow update - no server request
+```
+
+### Server-Side Updates
+
+Opt into re-running `getServerSideProps` by setting `shallow: false`:
+
+```tsx
+const [state, setState] = useQueryState('key', { shallow: false })
+// This will trigger getServerSideProps to re-run
+```
+
+### Dynamic Routes
+
+The adapter automatically handles dynamic route segments, preserving them during URL updates:
+
+```tsx title="pages/post/[id].tsx"
+import { useQueryState, parseAsInteger } from 'nuqs'
+import { useRouter } from 'next/router'
+
+export default function PostPage() {
+  const router = useRouter()
+  const { id } = router.query
+  const [page, setPage] = useQueryState('page', parseAsInteger.withDefault(1))
+
+  return (
+    <div>
+      <h1>Post {id}</h1>
+      <p>Page {page}</p>
+      <button onClick={() => setPage(page + 1)}>Next Page</button>
+    </div>
+  )
+}
+```
+
+The adapter correctly separates dynamic route parameters (`id`) from search params (`page`).
+
+## How It Works
+
+The Pages Router adapter:
+
+1. Uses `useRouter()` from `next/compat/router` to access the router
+2. Reads search params from `router.query`
+3. Updates the URL using `router.push()` or `router.replace()`
+4. Automatically extracts and preserves dynamic route segments
+5. Listens to `routeChangeStart` and `beforeHistoryChange` events to reset queues
+
+## Server-Side Rendering
+
+You can access and parse search params in `getServerSideProps`:
+
+```tsx title="pages/products.tsx"
+import { createLoader, parseAsInteger, parseAsString } from 'nuqs/server'
+import type { GetServerSideProps } from 'next'
+
+const searchParams = {
+  q: parseAsString,
+  page: parseAsInteger.withDefault(1)
+}
+
+const loadSearchParams = createLoader(searchParams)
+
+export const getServerSideProps: GetServerSideProps = async (context) => {
+  const { q, page } = loadSearchParams(context.query)
+  
+  // Fetch data using the parsed search params
+  const products = await fetchProducts({ query: q, page })
+  
+  return {
+    props: { products, q, page }
+  }
+}
+
+export default function ProductsPage({ products, q, page }) {
+  // You can also use the hooks on the client side
+  const [query, setQuery] = useQueryState('q')
+  
+  return (
+    <div>
+      <h1>Products</h1>
+      <p>Query: {q || 'none'}, Page: {page}</p>
+      {/* Render products */}
+    </div>
+  )
+}
+```
+
+## Catch-All Routes
+
+The adapter supports catch-all and optional catch-all routes:
+
+```tsx title="pages/docs/[...slug].tsx"
+// URL: /docs/getting-started/installation?ref=home
+// router.query.slug = ['getting-started', 'installation']
+// search params: ref=home
+
+const [ref, setRef] = useQueryState('ref')
+// Works correctly alongside dynamic segments
+```
+
+## Troubleshooting
+
+### Search params conflict with dynamic route segments
+
+If you have a search param with the same name as a dynamic segment, the dynamic segment takes precedence:
+
+```tsx
+// pages/user/[id].tsx
+// URL: /user/123?id=456
+// router.query.id will be '123' (from the route)
+// The search param 'id=456' is ignored
+```
+
+Avoid naming conflicts by using different names for route segments and search params.
+
+### getServerSideProps not re-running
+
+Make sure you're passing `shallow: false` when updating state:
+
+```tsx
+setState('value', { shallow: false })
+```
+
+### Not working with Next.js 14.1 or older
+
+The Pages Router adapter requires Next.js 14.2.0 or newer. For older versions:
+
+- Upgrade to Next.js 14.2.0+, or
+- Use nuqs v1.x which has built-in support for older Next.js versions

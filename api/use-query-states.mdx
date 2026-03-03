@@ -1,0 +1,564 @@
+---
+title: 'useQueryStates'
+description: 'React hook to synchronize multiple URL query parameters with component state'
+---
+
+## Overview
+
+`useQueryStates` is a React hook that synchronizes multiple URL query parameters with component state. It's ideal for managing related query parameters that should always move together, providing atomic updates and type-safe access to multiple state values.
+
+## Function Signature
+
+```typescript
+function useQueryStates<KeyMap extends UseQueryStatesKeysMap>(
+  keyMap: KeyMap,
+  options?: Partial<UseQueryStatesOptions<KeyMap>>
+): UseQueryStatesReturn<KeyMap>
+```
+
+### Type Definitions
+
+```typescript
+type UseQueryStatesKeysMap<Map = any> = {
+  [Key in keyof Map]: KeyMapValue<Map[Key]>
+}
+
+type KeyMapValue<Type> = GenericParser<Type> & Options & {
+  defaultValue?: Type
+}
+
+type UseQueryStatesOptions<KeyMap> = Options & {
+  urlKeys: UrlKeys<KeyMap>
+}
+
+type UseQueryStatesReturn<T extends UseQueryStatesKeysMap> = [
+  Values<T>,
+  SetValues<T>
+]
+
+type Values<T extends UseQueryStatesKeysMap> = {
+  [K in keyof T]: T[K]['defaultValue'] extends NonNullable<ReturnType<T[K]['parse']>>
+    ? NonNullable<ReturnType<T[K]['parse']>>
+    : ReturnType<T[K]['parse']> | null
+}
+
+type SetValues<T extends UseQueryStatesKeysMap> = (
+  values: Partial<Nullable<Values<T>>> | UpdaterFn<T> | null,
+  options?: Options
+) => Promise<URLSearchParams>
+
+type UpdaterFn<T extends UseQueryStatesKeysMap> = (
+  old: Values<T>
+) => Partial<Nullable<Values<T>>> | null
+```
+
+## Parameters
+
+<ParamField path="keyMap" type="UseQueryStatesKeysMap" required>
+  An object describing the keys to synchronize and how to parse and serialize them.
+  
+  Each key in the object represents a query parameter, with a parser configuration as its value.
+
+  ```typescript
+  {
+    latitude: parseAsFloat.withDefault(45.18),
+    longitude: parseAsFloat.withDefault(5.72),
+    zoom: parseAsInteger.withDefault(10)
+  }
+  ```
+</ParamField>
+
+<ParamField path="options" type="UseQueryStatesOptions<KeyMap>">
+  Optional configuration object for behavior options.
+
+  ### Behavior Options
+
+  <ParamField path="history" type="'push' | 'replace'" default="'replace'">
+    How query updates affect page history:
+    - `'replace'`: Keep the current history point (default)
+    - `'push'`: Create a new history entry
+  </ParamField>
+
+  <ParamField path="scroll" type="boolean" default={false}>
+    Whether to scroll to top after a query state update.
+  </ParamField>
+
+  <ParamField path="shallow" type="boolean" default={true}>
+    Client-side only updates when `true`. Set to `false` to trigger server re-renders (Next.js only).
+  </ParamField>
+
+  <ParamField path="throttleMs" type="number" default={50}>
+    Maximum time (ms) to wait between URL updates.
+    
+    <Warning>Deprecated: Use `limitUrlUpdates` instead.</Warning>
+  </ParamField>
+
+  <ParamField path="limitUrlUpdates" type="LimitUrlUpdates">
+    Rate limiting configuration for URL updates:
+    ```typescript
+    type LimitUrlUpdates = 
+      | { method: 'throttle'; timeMs: number }
+      | { method: 'debounce'; timeMs: number }
+    ```
+  </ParamField>
+
+  <ParamField path="startTransition" type="TransitionStartFunction">
+    Pass `startTransition` from `React.useTransition()` to observe loading states.
+  </ParamField>
+
+  <ParamField path="clearOnDefault" type="boolean" default={true}>
+    Clear query parameters from the URL when setting to default values.
+  </ParamField>
+
+  <ParamField path="urlKeys" type="UrlKeys<KeyMap>">
+    Map state keys to different URL parameter names:
+    ```typescript
+    {
+      latitude: 'lat',   // Use ?lat=... in URL instead of ?latitude=...
+      longitude: 'lng'   // Use ?lng=... in URL instead of ?longitude=...
+    }
+    ```
+  </ParamField>
+</ParamField>
+
+## Return Value
+
+Returns a tuple `[state, setState]` similar to `React.useState`:
+
+<ParamField path="state" type="Values<KeyMap>">
+  An object containing all state values with keys matching the `keyMap`:
+  
+  ```typescript
+  {
+    latitude: number | null,
+    longitude: number | null,
+    zoom: number
+  }
+  ```
+  
+  Values are `null` if not in URL and no default is provided, otherwise the parsed or default value.
+</ParamField>
+
+<ParamField path="setState" type="SetValues<KeyMap>">
+  State updater function accepting:
+  
+  1. **Partial object** with new values:
+     ```typescript
+     setState({ latitude: 48.8566, longitude: 2.3522 })
+     ```
+  
+  2. **Updater function** receiving old state:
+     ```typescript
+     setState(old => ({ zoom: old.zoom + 1 }))
+     ```
+  
+  3. **null** to clear all keys:
+     ```typescript
+     setState(null)
+     ```
+
+  **Parameters:**
+  - `values`: Partial object, updater function, or `null`
+  - `options`: Optional options to override hook-level settings
+
+  **Returns:** Promise resolving with updated URLSearchParams
+</ParamField>
+
+## Usage Examples
+
+### Basic Multi-State Management
+
+```tsx
+'use client'
+
+import { useQueryStates, parseAsFloat, parseAsInteger } from 'nuqs'
+
+export default function MapView() {
+  const [coordinates, setCoordinates] = useQueryStates({
+    lat: parseAsFloat.withDefault(45.18),
+    lng: parseAsFloat.withDefault(5.72),
+    zoom: parseAsInteger.withDefault(10)
+  })
+  
+  const { lat, lng, zoom } = coordinates
+  
+  return (
+    <>
+      <div>Latitude: {lat}</div>
+      <div>Longitude: {lng}</div>
+      <div>Zoom: {zoom}</div>
+      
+      <button onClick={() => setCoordinates({
+        lat: Math.random() * 180 - 90,
+        lng: Math.random() * 360 - 180
+      })}>
+        Random Location
+      </button>
+    </>
+  )
+}
+```
+
+### Partial Updates
+
+```tsx
+import { useQueryStates, parseAsFloat } from 'nuqs'
+
+export default function Coordinates() {
+  const [coords, setCoords] = useQueryStates({
+    lat: parseAsFloat,
+    lng: parseAsFloat
+  })
+  
+  // Update only latitude
+  const updateLat = () => setCoords({ lat: 48.8566 })
+  
+  // Update only longitude
+  const updateLng = () => setCoords({ lng: 2.3522 })
+  
+  // Update both atomically
+  const updateBoth = () => setCoords({ 
+    lat: 48.8566, 
+    lng: 2.3522 
+  })
+  
+  return (
+    <>
+      <button onClick={updateLat}>Set Paris Lat</button>
+      <button onClick={updateLng}>Set Paris Lng</button>
+      <button onClick={updateBoth}>Set Paris</button>
+    </>
+  )
+}
+```
+
+### With Updater Function
+
+```tsx
+import { useQueryStates, parseAsInteger } from 'nuqs'
+
+export default function Pagination() {
+  const [pagination, setPagination] = useQueryStates({
+    page: parseAsInteger.withDefault(1),
+    limit: parseAsInteger.withDefault(10)
+  })
+  
+  const nextPage = () => setPagination(old => ({ 
+    page: old.page + 1 
+  }))
+  
+  const prevPage = () => setPagination(old => ({ 
+    page: Math.max(1, old.page - 1)
+  }))
+  
+  const changeLimit = (newLimit: number) => setPagination({
+    limit: newLimit,
+    page: 1 // Reset to first page when changing limit
+  })
+  
+  return (
+    <>
+      <div>Page {pagination.page}</div>
+      <div>Showing {pagination.limit} per page</div>
+      
+      <button onClick={prevPage}>Previous</button>
+      <button onClick={nextPage}>Next</button>
+      
+      <select 
+        value={pagination.limit} 
+        onChange={e => changeLimit(Number(e.target.value))}
+      >
+        <option value={10}>10</option>
+        <option value={25}>25</option>
+        <option value={50}>50</option>
+      </select>
+    </>
+  )
+}
+```
+
+### With URL Key Mapping
+
+```tsx
+import { useQueryStates, parseAsFloat } from 'nuqs'
+
+export default function Coordinates() {
+  // State keys: latitude, longitude
+  // URL keys: lat, lng
+  const [coords, setCoords] = useQueryStates(
+    {
+      latitude: parseAsFloat.withDefault(0),
+      longitude: parseAsFloat.withDefault(0)
+    },
+    {
+      urlKeys: {
+        latitude: 'lat',
+        longitude: 'lng'
+      }
+    }
+  )
+  
+  // Access via state keys
+  const { latitude, longitude } = coords
+  
+  // URL will show: ?lat=45.18&lng=5.72
+  return (
+    <div>
+      Lat: {latitude}, Lng: {longitude}
+    </div>
+  )
+}
+```
+
+### Complex Filter State
+
+```tsx
+import { 
+  useQueryStates, 
+  parseAsString, 
+  parseAsInteger,
+  parseAsArrayOf,
+  parseAsStringEnum
+} from 'nuqs'
+
+enum SortOrder {
+  asc = 'asc',
+  desc = 'desc'
+}
+
+export default function ProductList() {
+  const [filters, setFilters] = useQueryStates({
+    search: parseAsString,
+    category: parseAsString,
+    minPrice: parseAsInteger,
+    maxPrice: parseAsInteger,
+    tags: parseAsArrayOf(parseAsString),
+    sort: parseAsStringEnum<SortOrder>(Object.values(SortOrder))
+      .withDefault(SortOrder.asc)
+  })
+  
+  const clearFilters = () => setFilters(null)
+  
+  const updateSearch = (search: string) => 
+    setFilters({ search: search || null })
+  
+  const updatePriceRange = (min: number, max: number) =>
+    setFilters({ minPrice: min, maxPrice: max })
+  
+  return (
+    <>
+      <input
+        value={filters.search || ''}
+        onChange={e => updateSearch(e.target.value)}
+        placeholder="Search products..."
+      />
+      
+      <div>
+        Price: {filters.minPrice ?? 0} - {filters.maxPrice ?? 1000}
+      </div>
+      
+      <div>Tags: {filters.tags?.join(', ')}</div>
+      
+      <button onClick={clearFilters}>Clear All Filters</button>
+    </>
+  )
+}
+```
+
+### Sharing Parser Definitions
+
+```tsx
+// parsers.ts
+import { parseAsFloat, parseAsInteger } from 'nuqs'
+
+export const mapParsers = {
+  latitude: parseAsFloat.withDefault(45.18),
+  longitude: parseAsFloat.withDefault(5.72),
+  zoom: parseAsInteger.withDefault(10)
+}
+
+export const mapUrlKeys = {
+  latitude: 'lat',
+  longitude: 'lng',
+  zoom: 'z'
+}
+
+// component.tsx
+import { useQueryStates } from 'nuqs'
+import { mapParsers, mapUrlKeys } from './parsers'
+
+export default function Map() {
+  const [coords, setCoords] = useQueryStates(mapParsers, {
+    urlKeys: mapUrlKeys
+  })
+  
+  return <div>Map at {coords.latitude}, {coords.longitude}</div>
+}
+```
+
+### With History Push
+
+```tsx
+import { useQueryStates, parseAsString, parseAsInteger } from 'nuqs'
+
+export default function SearchHistory() {
+  const [search, setSearch] = useQueryStates(
+    {
+      query: parseAsString,
+      page: parseAsInteger.withDefault(1)
+    },
+    {
+      history: 'push' // Each update creates history entry
+    }
+  )
+  
+  // Users can use browser back/forward to navigate search history
+  return (
+    <input
+      value={search.query || ''}
+      onChange={e => setSearch({ 
+        query: e.target.value || null,
+        page: 1 // Reset to page 1 on new search
+      })}
+    />
+  )
+}
+```
+
+### With Transitions (Server Updates)
+
+```tsx
+'use client'
+
+import React from 'react'
+import { useQueryStates, parseAsString, parseAsInteger } from 'nuqs'
+
+export default function ServerFilters({ data }) {
+  const [isLoading, startTransition] = React.useTransition()
+  
+  const [filters, setFilters] = useQueryStates(
+    {
+      search: parseAsString,
+      page: parseAsInteger.withDefault(1)
+    },
+    {
+      startTransition,
+      shallow: false // Notify the server
+    }
+  )
+  
+  if (isLoading) return <div>Loading...</div>
+  
+  return (
+    <input
+      value={filters.search || ''}
+      onChange={e => setFilters({ 
+        search: e.target.value || null,
+        page: 1
+      })}
+    />
+  )
+}
+```
+
+### Awaiting Batched Updates
+
+```tsx
+import { useQueryStates, parseAsFloat } from 'nuqs'
+
+export default function Coordinates() {
+  const [coords, setCoords] = useQueryStates({
+    lat: parseAsFloat,
+    lng: parseAsFloat
+  })
+  
+  const setRandomLocation = async () => {
+    const search = await setCoords({
+      lat: Math.random() * 180 - 90,
+      lng: Math.random() * 360 - 180
+    })
+    
+    // Both updates are applied atomically
+    console.log('Updated URL:', search.toString())
+    console.log('Lat:', search.get('lat'))
+    console.log('Lng:', search.get('lng'))
+  }
+  
+  return <button onClick={setRandomLocation}>Random Location</button>
+}
+```
+
+## Behavior Notes
+
+<Note>
+  **Atomic updates**: All state changes in a single `setState` call are applied to the URL together, ensuring consistency.
+</Note>
+
+<Note>
+  **Partial updates**: You can update a subset of keys. Omitted keys retain their current values.
+</Note>
+
+<Note>
+  **Clearing all state**: Passing `null` to `setState` clears all managed query parameters from the URL.
+</Note>
+
+<Warning>
+  **URL key mapping**: When using `urlKeys`, always access state using the state key names (from `keyMap`), not the URL parameter names.
+</Warning>
+
+<Note>
+  **Default values**: Keys with default values will never be `null` in the returned state object.
+</Note>
+
+<Note>
+  **Cross-hook synchronization**: Multiple `useQueryState` or `useQueryStates` hooks managing the same URL parameters will stay synchronized automatically.
+</Note>
+
+## Common Patterns
+
+### Conditional Updates
+
+```tsx
+const updateFilters = (search?: string, category?: string) => {
+  const updates: Partial<typeof filters> = {}
+  if (search !== undefined) updates.search = search || null
+  if (category !== undefined) updates.category = category || null
+  setFilters(updates)
+}
+```
+
+### Reset Individual Keys
+
+```tsx
+// Reset only the search query
+setFilters({ search: null })
+
+// Reset multiple specific keys
+setFilters({ search: null, category: null })
+```
+
+### Override Options Per Update
+
+```tsx
+const [state, setState] = useQueryStates(parsers, { history: 'push' })
+
+// Override on individual calls
+setState({ key: 'value' }, { history: 'replace' })
+```
+
+## Comparison with useQueryState
+
+| Feature | useQueryState | useQueryStates |
+|---------|---------------|----------------|
+| Query parameters | Single | Multiple |
+| Updates | One at a time | Atomic batch updates |
+| Return type | `[value, setValue]` | `[values, setValues]` |
+| Type inference | Simple | Object with typed keys |
+| Best for | Independent parameters | Related parameters |
+
+## See Also
+
+- [useQueryState](/api/use-query-state) - Manage a single query parameter
+- [Built-in Parsers](/api/parsers/built-in) - Ready-to-use parsers for common types
+- [createSerializer](/api/server/create-serializer) - Generate query strings for links
+- [createSearchParamsCache](/api/server/create-search-params-cache) - Server-side parameter access

@@ -1,0 +1,373 @@
+---
+title: 'Loaders'
+description: 'Parse search params in loaders, API routes, and one-off operations with createLoader'
+---
+
+## Overview
+
+The `createLoader` function creates a type-safe loader function for parsing search parameters from various input types. It's designed for one-off parsing operations in loaders, API routes, `getServerSideProps`, or any server-side context where you need to parse search params.
+
+## Basic Usage
+
+```tsx
+import { createLoader, parseAsString, parseAsInteger } from 'nuqs/server'
+
+const searchParams = {
+  q: parseAsString,
+  page: parseAsInteger.withDefault(1)
+}
+
+const loadSearchParams = createLoader(searchParams)
+
+const { q, page } = loadSearchParams('?q=hello&page=2')
+// q: string | null
+// page: number
+```
+
+## Function Signature
+
+```ts
+function createLoader<Parsers extends ParserMap>(
+  parsers: Parsers,
+  options?: CreateLoaderOptions<Parsers>
+): LoaderFunction<Parsers>
+```
+
+### Parameters
+
+<ParamField path="parsers" type="ParserMap" required>
+  An object mapping search param keys to their parser configurations. Each parser defines how to parse and serialize values.
+</ParamField>
+
+<ParamField path="options" type="CreateLoaderOptions">
+  Optional configuration object.
+  
+  <Expandable title="properties">
+    <ParamField path="urlKeys" type="UrlKeys<Parsers>">
+      Map internal state keys to different URL query parameter names.
+      
+      ```ts
+      const loadSearchParams = createLoader(
+        { query: parseAsString },
+        { urlKeys: { query: 'q' } }  // URL will use ?q=... instead of ?query=...
+      )
+      ```
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+## Accepted Input Types
+
+The loader function accepts multiple input types:
+
+### String
+
+```ts
+loadSearchParams('?q=hello&page=2')
+loadSearchParams('q=hello&page=2')  // ? is optional
+```
+
+### URL
+
+```ts
+const url = new URL('https://example.com/search?q=hello&page=2')
+loadSearchParams(url)
+```
+
+### URLSearchParams
+
+```ts
+const searchParams = new URLSearchParams('?q=hello&page=2')
+loadSearchParams(searchParams)
+```
+
+### Request
+
+```ts
+export async function GET(request: Request) {
+  const params = loadSearchParams(request)
+  // ...
+}
+```
+
+### Record Object
+
+```ts
+loadSearchParams({
+  q: 'hello',
+  page: '2'
+})
+```
+
+### Promise (Next.js 15+)
+
+```ts
+const loadSearchParams = createLoader({
+  q: parseAsString,
+  page: parseAsInteger.withDefault(1)
+})
+
+// Next.js 15 async searchParams
+export default async function Page({ searchParams }) {
+  const { q, page } = await loadSearchParams(searchParams)
+  // ...
+}
+```
+
+## Loader Options
+
+The loader function accepts an optional second parameter for runtime options:
+
+<ParamField path="strict" type="boolean" default={false}>
+  When `true`, the loader will throw an error if any parser fails to parse its value. When `false`, failed parsers return `null` or their default value.
+</ParamField>
+
+### Strict Mode Example
+
+```tsx
+const loadSearchParams = createLoader({
+  page: parseAsInteger
+})
+
+try {
+  // This will throw because "abc" is not a valid integer
+  const { page } = loadSearchParams('?page=abc', { strict: true })
+} catch (error) {
+  console.error(error)
+  // Error: [nuqs] Error while parsing query `abc` for key `page`
+}
+
+// Without strict mode, invalid values return null or default
+const { page } = loadSearchParams('?page=abc')  // page: null
+```
+
+## Framework Examples
+
+### Next.js App Router
+
+#### Server Component
+
+```tsx
+import { createLoader, parseAsString, parseAsInteger } from 'nuqs/server'
+
+const loadSearchParams = createLoader({
+  q: parseAsString,
+  page: parseAsInteger.withDefault(1)
+})
+
+export default async function SearchPage({ searchParams }) {
+  const { q, page } = await loadSearchParams(searchParams)
+  
+  const results = await searchDatabase(q, page)
+  
+  return (
+    <div>
+      <h1>Search Results for "{q}"</h1>
+      <ResultsList results={results} />
+      <Pagination currentPage={page} />
+    </div>
+  )
+}
+```
+
+#### API Route
+
+```tsx
+import { createLoader, parseAsInteger } from 'nuqs/server'
+
+const loadSearchParams = createLoader({
+  limit: parseAsInteger.withDefault(10),
+  offset: parseAsInteger.withDefault(0)
+})
+
+export async function GET(request: Request) {
+  const { limit, offset } = loadSearchParams(request)
+  
+  const data = await fetchData({ limit, offset })
+  
+  return Response.json(data)
+}
+```
+
+### Remix
+
+```tsx
+import { json, type LoaderFunctionArgs } from '@remix-run/node'
+import { createLoader, parseAsString, parseAsInteger } from 'nuqs/server'
+
+const loadSearchParams = createLoader({
+  q: parseAsString,
+  page: parseAsInteger.withDefault(1),
+  category: parseAsString
+})
+
+export async function loader({ request }: LoaderFunctionArgs) {
+  const { q, page, category } = loadSearchParams(request)
+  
+  const results = await db.search({
+    query: q,
+    page,
+    category
+  })
+  
+  return json({ results, q, page, category })
+}
+```
+
+### React Router
+
+```tsx
+import { createLoader, parseAsString } from 'nuqs/server'
+
+const loadSearchParams = createLoader({
+  filter: parseAsString,
+  sort: parseAsString.withDefault('name')
+})
+
+export async function loader({ request }) {
+  const { filter, sort } = loadSearchParams(request)
+  
+  const items = await fetchItems({ filter, sort })
+  
+  return { items, filter, sort }
+}
+```
+
+### Next.js Pages Router (getServerSideProps)
+
+```tsx
+import { createLoader, parseAsString } from 'nuqs/server'
+import type { GetServerSideProps } from 'next'
+
+const loadSearchParams = createLoader({
+  q: parseAsString,
+  category: parseAsString
+})
+
+export const getServerSideProps: GetServerSideProps = async ({ req }) => {
+  const { q, category } = loadSearchParams(req.url || '')
+  
+  const results = await searchProducts(q, category)
+  
+  return {
+    props: { results, q, category }
+  }
+}
+```
+
+## URL Keys Mapping
+
+You can map internal state keys to different URL query parameter names:
+
+```tsx
+const loadSearchParams = createLoader(
+  {
+    searchQuery: parseAsString,
+    pageNumber: parseAsInteger.withDefault(1)
+  },
+  {
+    urlKeys: {
+      searchQuery: 'q',      // Use ?q=... in the URL
+      pageNumber: 'page'     // Use ?page=... in the URL
+    }
+  }
+)
+
+// URL: ?q=laptop&page=2
+const { searchQuery, pageNumber } = loadSearchParams('?q=laptop&page=2')
+// searchQuery: "laptop"
+// pageNumber: 2
+```
+
+## Type Inference
+
+TypeScript automatically infers the return type based on your parsers:
+
+```tsx
+import { createLoader, parseAsInteger, parseAsBoolean } from 'nuqs/server'
+
+const loadSearchParams = createLoader({
+  count: parseAsInteger,                      // number | null
+  active: parseAsBoolean.withDefault(false),  // boolean
+  tags: parseAsArrayOf(parseAsString)         // string[] | null
+})
+
+const params = loadSearchParams(request)
+// TypeScript knows:
+// params.count: number | null
+// params.active: boolean
+// params.tags: string[] | null
+```
+
+## Sharing with Client Code
+
+You can share parser configurations between server loaders and client hooks:
+
+```tsx
+// shared/searchParams.ts
+import { parseAsString, parseAsInteger } from 'nuqs/server'
+
+export const searchParsers = {
+  q: parseAsString.withDefault(''),
+  page: parseAsInteger.withDefault(1),
+  category: parseAsString
+}
+
+// Server: loader.ts
+import { createLoader } from 'nuqs/server'
+import { searchParsers } from './shared/searchParams'
+
+const loadSearchParams = createLoader(searchParsers)
+
+export async function loader({ request }) {
+  const params = loadSearchParams(request)
+  // ...
+}
+
+// Client: SearchFilters.tsx
+import { useQueryStates } from 'nuqs'
+import { searchParsers } from './shared/searchParams'
+
+export function SearchFilters() {
+  const [filters, setFilters] = useQueryStates(searchParsers)
+  // ...
+}
+```
+
+## Best Practices
+
+<Steps>
+  <Step title="Use withDefault for required values">
+    If a search param should always have a value, use `.withDefault()` to avoid null checks:
+    
+    ```ts
+    const loadSearchParams = createLoader({
+      page: parseAsInteger.withDefault(1),
+      limit: parseAsInteger.withDefault(20)
+    })
+    ```
+  </Step>
+  
+  <Step title="Enable strict mode for validation">
+    Use `strict: true` when you need to validate that search params are well-formed:
+    
+    ```ts
+    const params = loadSearchParams(request, { strict: true })
+    ```
+  </Step>
+  
+  <Step title="Share parser configurations">
+    Define parsers once and reuse them in both server loaders and client hooks for consistency.
+  </Step>
+</Steps>
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="Cache" icon="database" href="/server/cache">
+    Use createSearchParamsCache for server components
+  </Card>
+  <Card title="Parsers" icon="code" href="/parsers">
+    Learn about available parser types
+  </Card>
+</CardGroup>

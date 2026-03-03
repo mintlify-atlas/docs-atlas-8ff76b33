@@ -1,0 +1,274 @@
+---
+title: "Parser System Overview"
+description: "Understanding the parser architecture and interfaces in nuqs"
+---
+
+## Parser Architecture
+
+Parsers in nuqs are the foundation of type-safe URL state synchronization. They define how values are converted between URL query strings (always strings) and typed application state.
+
+## Core Interfaces
+
+### SingleParser
+
+The `SingleParser` interface handles single-value query parameters:
+
+```typescript
+export type SingleParser<T> = {
+  type?: 'single'
+  
+  /**
+   * Convert a query string value into a state value.
+   *
+   * If the string value does not represent a valid state value,
+   * the parser should return `null`. Throwing an error is also supported.
+   */
+  parse: (value: string) => T | null
+
+  /**
+   * Render the state value into a query string value.
+   */
+  serialize?: (value: T) => string
+
+  /**
+   * Check if two state values are equal.
+   *
+   * This is used when using the `clearOnDefault` value, to compare the default
+   * value with the set value.
+   *
+   * It makes sense to provide this function when the state value is an object
+   * or an array, as the default referential equality check will not work.
+   */
+  eq?: (a: T, b: T) => boolean
+}
+```
+
+**From:** `packages/nuqs/src/parsers.ts:7-32`
+
+<ParamField path="type" type="'single'" optional>
+  Parser type identifier. Defaults to `'single'` if not specified.
+</ParamField>
+
+<ParamField path="parse" type="(value: string) => T | null" required>
+  Converts a URL query string value to the typed state value.
+  
+  **Must return `null` for invalid inputs** rather than throwing errors. This ensures graceful degradation when URLs contain unexpected values.
+</ParamField>
+
+<ParamField path="serialize" type="(value: T) => string" optional>
+  Converts the typed state value back to a URL query string.
+  
+  **Must be lossless** - parsing a serialized value should return the original value.
+  
+  Defaults to `String` if not provided.
+</ParamField>
+
+<ParamField path="eq" type="(a: T, b: T) => boolean" optional>
+  Custom equality function for comparing state values.
+  
+  Used with `clearOnDefault` to determine when to remove the query parameter from the URL.
+  
+  Defaults to referential equality (`a === b`) if not provided. Essential for objects and arrays.
+</ParamField>
+
+### MultiParser
+
+The `MultiParser` interface handles array-based query parameters (e.g., `?tag=react&tag=next`):
+
+```typescript
+export type MultiParser<T> = {
+  type: 'multi'
+  parse: (value: ReadonlyArray<string>) => T | null
+  serialize?: (value: T) => Array<string>
+  eq?: (a: T, b: T) => boolean
+}
+```
+
+**From:** `packages/nuqs/src/parsers.ts:34-39`
+
+<ParamField path="type" type="'multi'" required>
+  Must be set to `'multi'` to handle multiple values for the same key.
+</ParamField>
+
+<ParamField path="parse" type="(value: ReadonlyArray<string>) => T | null" required>
+  Parses an array of query string values. Each value comes from a repeated parameter (e.g., `?id=1&id=2&id=3`).
+</ParamField>
+
+<ParamField path="serialize" type="(value: T) => Array<string>" optional>
+  Serializes the state value into an array of query string values.
+</ParamField>
+
+<ParamField path="eq" type="(a: T, b: T) => boolean" optional>
+  Custom equality function for comparing state values.
+</ParamField>
+
+## Builder Pattern
+
+All parsers created with `createParser` implement the builder pattern for configuration:
+
+### SingleParserBuilder
+
+```typescript
+export type SingleParserBuilder<T> = Required<SingleParser<T>> &
+  Options & {
+    /**
+     * Set history type, shallow routing and scroll restoration options
+     * at the hook declaration level.
+     */
+    withOptions<This>(this: This, options: Options): This
+
+    /**
+     * Specifying a default value makes the hook state non-nullable when the
+     * query is missing from the URL: the default value is returned instead
+     * of `null`.
+     */
+    withDefault(
+      this: SingleParserBuilder<T>,
+      defaultValue: NonNullable<T>
+    ): Omit<SingleParserBuilder<T>, 'parseServerSide'> & {
+      readonly defaultValue: NonNullable<T>
+      parseServerSide(value: string | string[] | undefined): NonNullable<T>
+    }
+
+    /**
+     * Use the parser in Server Components
+     * @deprecated prefer using loaders instead
+     */
+    parseServerSide(value: string | string[] | undefined): T | null
+  }
+```
+
+**From:** `packages/nuqs/src/parsers.ts:52-123`
+
+### MultiParserBuilder
+
+```typescript
+export type MultiParserBuilder<T> = Required<MultiParser<T>> &
+  Options & {
+    withOptions<This>(this: This, options: Options): This
+    withDefault(
+      this: MultiParserBuilder<T>,
+      defaultValue: NonNullable<T>
+    ): Omit<MultiParserBuilder<T>, 'parseServerSide'> & {
+      readonly defaultValue: NonNullable<T>
+      parseServerSide(value: string | string[] | undefined): NonNullable<T>
+    }
+    parseServerSide(value: string | string[] | undefined): T | null
+  }
+```
+
+**From:** `packages/nuqs/src/parsers.ts:125-144`
+
+## Type Inference
+
+Extract TypeScript types from parsers using the `inferParserType` helper:
+
+```typescript
+import { type inferParserType } from 'nuqs'
+
+const intNullable = parseAsInteger
+const intNonNull = parseAsInteger.withDefault(0)
+
+type A = inferParserType<typeof intNullable> // number | null
+type B = inferParserType<typeof intNonNull>  // number
+
+// Works with parser objects too
+const parsers = {
+  a: parseAsInteger,
+  b: parseAsBoolean.withDefault(false)
+}
+
+type State = inferParserType<typeof parsers>
+// { a: number | null, b: boolean }
+```
+
+```typescript
+export type inferParserType<Input> =
+  Input extends GenericParserBuilder<any>
+    ? inferSingleParserType<Input>
+    : Input extends Record<string, GenericParserBuilder<any>>
+      ? inferParserRecordType<Input>
+      : never
+```
+
+**From:** `packages/nuqs/src/parsers.ts:583-588`
+
+## Design Principles
+
+### 1. Always Return Null for Invalid Input
+
+Parsers should gracefully handle invalid input by returning `null`, never throwing errors:
+
+```typescript
+// ✅ Good
+const parseAsInteger = createParser({
+  parse: v => {
+    const int = parseInt(v)
+    return int == int ? int : null // NaN check
+  },
+  serialize: v => '' + Math.round(v)
+})
+
+// ❌ Bad - throws errors
+const parseAsInteger = createParser({
+  parse: v => {
+    if (!/^\d+$/.test(v)) {
+      throw new Error('Invalid integer')
+    }
+    return parseInt(v)
+  },
+  serialize: String
+})
+```
+
+### 2. Lossless Serialization
+
+Serializers must be lossless to prevent data corruption on page reload:
+
+```typescript
+// ❌ Bad - loses precision
+const parseAsFloat = createParser({
+  parse: parseFloat,
+  serialize: v => v.toFixed(2) // Rounds!
+})
+
+// ✅ Good - preserves precision
+const parseAsFloat = createParser({
+  parse: v => {
+    const float = parseFloat(v)
+    return float == float ? float : null
+  },
+  serialize: String // No rounding
+})
+```
+
+**From:** `packages/nuqs/src/parsers.ts:262-268`
+
+### 3. Provide Custom Equality for Objects
+
+When parsing objects or arrays, provide a custom `eq` function:
+
+```typescript
+const parseAsJson = createParser({
+  parse: query => {
+    try {
+      return JSON.parse(query)
+    } catch {
+      return null
+    }
+  },
+  serialize: value => JSON.stringify(value),
+  eq(a, b) {
+    // Check referential equality first for performance
+    return a === b || JSON.stringify(a) === JSON.stringify(b)
+  }
+})
+```
+
+**From:** `packages/nuqs/src/parsers.ts:452-455`
+
+## Next Steps
+
+- [Built-in Parsers](/api/parsers/built-in) - Complete reference for all built-in parsers
+- [createParser API](/api/parsers/create-parser) - Build custom parsers
+- [Parser Concepts](/concepts/parsers) - Higher-level guide to using parsers

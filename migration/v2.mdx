@@ -1,0 +1,319 @@
+---
+title: Migration Guide to v2
+description: How to update your code from nuqs v1 to v2
+---
+
+This guide will help you migrate from nuqs v1 to v2. The biggest change in v2 is the introduction of **adapters** to support multiple React frameworks beyond Next.js.
+
+## Overview of Breaking Changes
+
+- [Adapters are now required](#adapters-required)
+- [Minimum Next.js version: 14.2.0](#minimum-nextjs-version)
+- [Behaviour changes](#behaviour-changes)
+- [ESM-only package](#esm-only)
+- [Deprecated exports removed](#deprecated-exports-removed)
+- [`nuqs/parsers` renamed to `nuqs/server`](#nuqsparsers-renamed)
+- [Type changes](#type-changes)
+
+## Adapters Required
+
+<Warning>
+The most significant change in v2 is that **you must wrap your app with an adapter**. This enables nuqs to support multiple React frameworks beyond just Next.js.
+</Warning>
+
+### Next.js App Router
+
+Wrap your `{children}` with the `NuqsAdapter` component in your root layout:
+
+```tsx title="src/app/layout.tsx"
+import { NuqsAdapter } from 'nuqs/adapters/next/app'
+import { type ReactNode } from 'react'
+
+export default function RootLayout({
+  children
+}: {
+  children: ReactNode
+}) {
+  return (
+    <html>
+      <body>
+        <NuqsAdapter>{children}</NuqsAdapter>
+      </body>
+    </html>
+  )
+}
+```
+
+### Next.js Pages Router
+
+Wrap the `<Component>` page outlet in your `_app.tsx` file:
+
+```tsx title="src/pages/_app.tsx"
+import type { AppProps } from 'next/app'
+import { NuqsAdapter } from 'nuqs/adapters/next/pages'
+
+export default function MyApp({ Component, pageProps }: AppProps) {
+  return (
+    <NuqsAdapter>
+      <Component {...pageProps} />
+    </NuqsAdapter>
+  )
+}
+```
+
+### Unified Adapter (Both Routers)
+
+If your Next.js app uses both app and pages routers, import the unified adapter:
+
+```tsx
+import { NuqsAdapter } from 'nuqs/adapters/next'
+```
+
+<Note>
+This comes with a slightly larger bundle size (~100B) compared to the router-specific adapters.
+</Note>
+
+## Migration Steps
+
+<Steps>
+
+### Step 1: Update Dependencies
+
+Update your `package.json` to use nuqs v2 and ensure Next.js is at minimum version 14.2.0:
+
+```bash
+npm install nuqs@latest
+# or
+pnpm add nuqs@latest
+# or
+yarn add nuqs
+```
+
+### Step 2: Add the Adapter
+
+Choose the appropriate adapter for your Next.js router and wrap your app as shown in the [Adapters Required](#adapters-required) section above.
+
+### Step 3: Update Server-Side Imports
+
+Replace all imports from `nuqs/parsers` to `nuqs/server`:
+
+```diff
+- import { parseAsInteger, createSearchParamsCache } from 'nuqs/parsers'
++ import { parseAsInteger, createSearchParamsCache } from 'nuqs/server'
+```
+
+This change reflects that the export now contains more than just parsers and is specifically for server-side code.
+
+### Step 4: Replace Deprecated Exports
+
+If you're using the deprecated `queryTypes` object, replace it with individual parser exports:
+
+```diff
+- import { queryTypes } from 'nuqs'
++ import { parseAsString, parseAsInteger } from 'nuqs'
+
+- useQueryState('q', queryTypes.string.withOptions({ ... }))
+- useQueryState('page', queryTypes.integer.withDefault(1))
++ useQueryState('q', parseAsString.withOptions({ ... }))
++ useQueryState('page', parseAsInteger.withDefault(1))
+```
+
+### Step 5: Update Transition Options
+
+If you're using `startTransition`, you now need to explicitly set `shallow: false` to send updates to the server:
+
+```diff
+useQueryState('q', {
+  startTransition: true,
++ shallow: false
+})
+```
+
+</Steps>
+
+## Minimum Next.js Version
+
+<Warning>
+nuqs v2 requires **Next.js ≥14.2.0**
+</Warning>
+
+Early versions of Next.js 14 had instability with shallow routing. Supporting those versions required workarounds and performance penalties, which have been removed in v2.
+
+## Behaviour Changes
+
+### startTransition No Longer Implies shallow: false
+
+In v1, setting `startTransition` automatically set `shallow: false`. This is no longer the case in v2 to align with other frameworks that don't have shallow/deep routing concepts.
+
+**Before (v1):**
+```tsx
+useQueryState('q', {
+  startTransition: true
+  // shallow: false was implicit
+})
+```
+
+**After (v2):**
+```tsx
+useQueryState('q', {
+  startTransition: true,
+  shallow: false // must be explicit
+})
+```
+
+### "use client" Directive Added
+
+The `"use client"` directive is now included in the main `nuqs` import. Server-side code must import from `nuqs/server` to avoid errors:
+
+```
+Error: Attempted to call withDefault() from the server but withDefault is on
+the client. It's not possible to invoke a client function from the server.
+```
+
+**Solution:** Use `nuqs/server` for all server-side code:
+
+```tsx
+// Server component
+import { parseAsInteger, createSearchParamsCache } from 'nuqs/server'
+
+// Client component
+'use client'
+import { useQueryState, parseAsInteger } from 'nuqs'
+```
+
+## ESM Only
+
+nuqs v2 is now an ESM-only package. This shouldn't affect most Next.js users (ESM supported since Next.js 12), but if you're bundling nuqs into an intermediate CommonJS library, you may encounter:
+
+```
+[ERR_REQUIRE_ESM]: require() of ES Module not supported
+```
+
+**Solution:** Use dynamic imports if converting to ESM is not possible:
+
+```ts
+const { useQueryState } = await import('nuqs')
+```
+
+## Deprecated Exports Removed
+
+### queryTypes Object
+
+The `queryTypes` object has been removed in favor of individual parser exports for better tree-shaking.
+
+**Before:**
+```tsx
+import { queryTypes } from 'nuqs'
+useQueryState('page', queryTypes.integer.withDefault(1))
+```
+
+**After:**
+```tsx
+import { parseAsInteger } from 'nuqs'
+useQueryState('page', parseAsInteger.withDefault(1))
+```
+
+### subscribeToQueryUpdates
+
+This internal helper has been removed. Next.js 14.1.0+ makes `useSearchParams` reactive to shallow updates, making this function redundant.
+
+## nuqs/parsers Renamed
+
+The `nuqs/parsers` export has been renamed to `nuqs/server` to better reflect its purpose.
+
+**Find and replace:**
+```diff
+- import { parseAsInteger, createSearchParamsCache } from 'nuqs/parsers'
++ import { parseAsInteger, createSearchParamsCache } from 'nuqs/server'
+```
+
+## Debug Printout Detection
+
+The debug logging detection now only checks for `nuqs` in `localStorage.debug` (not the old `next-usequerystate` name).
+
+**Update your local environment:**
+```ts
+// Run once in devtools console
+if (localStorage.debug) {
+  localStorage.debug = localStorage.debug.replace('next-usequerystate', 'nuqs')
+}
+```
+
+## Type Changes
+
+The following type changes may affect your TypeScript code:
+
+- The `Options` type is no longer generic
+- `UseQueryStatesOptions` is now a type (not an interface) and is generic over the object passed to `useQueryStates`
+- `parseAsJson` now requires a runtime validation function to infer the parsed JSON data type
+
+**parseAsJson example:**
+```tsx
+// v2 requires validation
+import { parseAsJson } from 'nuqs'
+import { z } from 'zod'
+
+const pointSchema = z.object({ x: z.number(), y: z.number() })
+
+useQueryState('point', parseAsJson(pointSchema.parse))
+```
+
+## Testing Improvements
+
+<Note>
+While not a breaking change, v2 introduces a dedicated testing adapter that makes unit testing much easier!
+</Note>
+
+Unit testing components using nuqs v1 required mocking Next.js router internals. In v2, use the `NuqsTestingAdapter`:
+
+```tsx
+import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { NuqsTestingAdapter, type UrlUpdateEvent } from 'nuqs/adapters/testing'
+import { describe, expect, it, vi } from 'vitest'
+
+it('should update query state', async () => {
+  const user = userEvent.setup()
+  const onUrlUpdate = vi.fn<[UrlUpdateEvent]>()
+  
+  render(<YourComponent />, {
+    wrapper: ({ children }) => (
+      <NuqsTestingAdapter 
+        searchParams="?count=1" 
+        onUrlUpdate={onUrlUpdate}
+      >
+        {children}
+      </NuqsTestingAdapter>
+    )
+  })
+  
+  const button = screen.getByRole('button')
+  await user.click(button)
+  
+  expect(onUrlUpdate).toHaveBeenCalledOnce()
+  expect(onUrlUpdate.mock.calls[0][0].queryString).toBe('?count=2')
+})
+```
+
+## New Framework Support
+
+Beyond Next.js, nuqs v2 now supports:
+
+- React SPA (Vite, Create React App)
+- Remix
+- React Router (v6 and v7)
+- TanStack Router
+
+See the [Adapters documentation](/concepts/adapters) for setup instructions for these frameworks.
+
+## Summary
+
+The migration to v2 primarily involves:
+
+1. Adding an adapter wrapper to your app
+2. Updating `nuqs/parsers` imports to `nuqs/server`
+3. Ensuring Next.js ≥14.2.0
+4. Explicitly setting `shallow: false` when using `startTransition`
+5. Replacing deprecated `queryTypes` with individual parsers
+
+Most of these changes can be handled with find-and-replace operations in your codebase.

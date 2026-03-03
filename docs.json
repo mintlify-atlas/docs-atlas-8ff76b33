@@ -1,122 +1,124 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "theme": "mint",
-  "name": "Mint Starter Kit",
+  "name": "nuqs",
+  "theme": "palm",
   "colors": {
-    "primary": "#16A34A",
-    "light": "#07C983",
-    "dark": "#15803D"
+    "primary": "#3B82F6",
+    "light": "#60A5FA",
+    "dark": "#2563EB"
   },
-  "favicon": "/favicon.svg",
+  "navbar": {
+    "primary": {
+      "type": "github",
+      "href": "https://github.com/47ng/nuqs"
+    }
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/47ng/nuqs"
+    }
+  },
   "navigation": {
     "tabs": [
       {
-        "tab": "Guides",
+        "tab": "Documentation",
         "groups": [
           {
-            "group": "Getting started",
+            "group": "Getting Started",
             "pages": [
-              "index",
-              "quickstart",
-              "development"
+              "introduction",
+              "installation",
+              "quickstart"
             ]
           },
           {
-            "group": "Customization",
+            "group": "Core Concepts",
             "pages": [
-              "essentials/settings",
-              "essentials/navigation"
+              "concepts/adapters",
+              "concepts/parsers",
+              "concepts/options",
+              "concepts/batching"
             ]
           },
           {
-            "group": "Writing content",
+            "group": "Framework Adapters",
             "pages": [
-              "essentials/markdown",
-              "essentials/code",
-              "essentials/images",
-              "essentials/reusable-snippets"
+              "adapters/nextjs-app",
+              "adapters/nextjs-pages",
+              "adapters/react",
+              "adapters/remix",
+              "adapters/react-router",
+              "adapters/tanstack-router",
+              "adapters/custom"
             ]
           },
           {
-            "group": "AI tools",
+            "group": "Server-Side",
             "pages": [
-              "ai-tools/cursor",
-              "ai-tools/claude-code",
-              "ai-tools/windsurf"
+              "server/overview",
+              "server/loaders",
+              "server/cache",
+              "server/serializer"
+            ]
+          },
+          {
+            "group": "Advanced",
+            "pages": [
+              "advanced/custom-parsers",
+              "advanced/testing",
+              "advanced/debugging",
+              "advanced/seo",
+              "advanced/troubleshooting"
+            ]
+          },
+          {
+            "group": "Migration",
+            "pages": [
+              "migration/v2"
             ]
           }
         ]
       },
       {
-        "tab": "API reference",
+        "tab": "API Reference",
         "groups": [
           {
-            "group": "API documentation",
+            "group": "Hooks",
             "pages": [
-              "api-reference/introduction"
+              "api/use-query-state",
+              "api/use-query-states"
             ]
           },
           {
-            "group": "Endpoint examples",
+            "group": "Parsers",
             "pages": [
-              "api-reference/endpoint/get",
-              "api-reference/endpoint/create",
-              "api-reference/endpoint/delete",
-              "api-reference/endpoint/webhook"
+              "api/parsers/overview",
+              "api/parsers/built-in",
+              "api/parsers/create-parser"
+            ]
+          },
+          {
+            "group": "Server Utilities",
+            "pages": [
+              "api/server/create-loader",
+              "api/server/create-search-params-cache",
+              "api/server/create-serializer"
+            ]
+          },
+          {
+            "group": "Testing",
+            "pages": [
+              "api/testing/adapter"
+            ]
+          },
+          {
+            "group": "Types",
+            "pages": [
+              "api/types"
             ]
           }
         ]
       }
-    ],
-    "global": {
-      "anchors": [
-        {
-          "anchor": "Documentation",
-          "href": "https://mintlify.com/docs",
-          "icon": "book-open-cover"
-        },
-        {
-          "anchor": "Blog",
-          "href": "https://mintlify.com/blog",
-          "icon": "newspaper"
-        }
-      ]
-    }
-  },
-  "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg"
-  },
-  "navbar": {
-    "links": [
-      {
-        "label": "Support",
-        "href": "mailto:hi@mintlify.com"
-      }
-    ],
-    "primary": {
-      "type": "button",
-      "label": "Dashboard",
-      "href": "https://dashboard.mintlify.com"
-    }
-  },
-  "contextual": {
-    "options": [
-     "copy",
-     "view",
-     "chatgpt",
-     "claude",
-     "perplexity",
-     "mcp",
-     "cursor",
-     "vscode"
-   ]
-  },
-  "footer": {
-    "socials": {
-      "x": "https://x.com/mintlify",
-      "github": "https://github.com/mintlify",
-      "linkedin": "https://linkedin.com/company/mintlify"
-    }
+    ]
   }
 }

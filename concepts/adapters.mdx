@@ -1,0 +1,262 @@
+---
+title: "Framework Adapters"
+description: "Understanding adapters and how nuqs integrates with different React frameworks"
+---
+
+## What are adapters?
+
+Adapters are framework-specific integration layers that enable nuqs to work seamlessly across different React frameworks. They bridge the gap between nuqs's core URL state management functionality and each framework's unique routing and navigation systems.
+
+## Why are adapters needed?
+
+Different React frameworks handle routing and URL updates in fundamentally different ways:
+
+- **Next.js App Router** uses React Server Components and navigation events
+- **Next.js Pages Router** relies on the `next/router` module
+- **Plain React SPAs** work directly with the browser's History API
+- **Remix** and **React Router** have their own navigation paradigms
+- **TanStack Router** provides its own state management approach
+
+Without adapters, nuqs would need to detect and handle these differences in every hook call, leading to a bloated bundle and maintenance nightmare. Adapters provide a clean abstraction that keeps the core library framework-agnostic.
+
+## How adapters work
+
+Every adapter implements the `AdapterInterface`, which requires two core capabilities:
+
+```typescript
+type AdapterInterface = {
+  // Current URL search parameters
+  searchParams: URLSearchParams
+  
+  // Function to update the URL
+  updateUrl: (search: URLSearchParams, options: AdapterOptions) => void
+  
+  // Optional: Get current search params snapshot
+  getSearchParamsSnapshot?: () => URLSearchParams
+  
+  // Optional: Rate limit factor for throttling
+  rateLimitFactor?: number
+  
+  // Optional: Auto-reset queue behavior
+  autoResetQueueOnUpdate?: boolean
+}
+```
+
+From `packages/nuqs/src/adapters/lib/defs.ts:12-18`
+
+## Available adapters
+
+### Next.js App Router
+
+```tsx
+import { NuqsAdapter } from 'nuqs/adapters/next/app'
+
+export default function RootLayout({ children }) {
+  return (
+    <html>
+      <body>
+        <NuqsAdapter>{children}</NuqsAdapter>
+      </body>
+    </html>
+  )
+}
+```
+
+<Note>
+Supported versions: Next.js `>=14.2.0`. For older versions, install `nuqs@^1`.
+</Note>
+
+### Next.js Pages Router
+
+```tsx
+import { NuqsAdapter } from 'nuqs/adapters/next/pages'
+import type { AppProps } from 'next/app'
+
+export default function MyApp({ Component, pageProps }: AppProps) {
+  return (
+    <NuqsAdapter>
+      <Component {...pageProps} />
+    </NuqsAdapter>
+  )
+}
+```
+
+### Plain React (SPA)
+
+For Vite, Create React App, or any React-based SPA:
+
+```tsx
+import { NuqsAdapter } from 'nuqs/adapters/react'
+import { createRoot } from 'react-dom/client'
+
+createRoot(document.getElementById('root')!).render(
+  <NuqsAdapter>
+    <App />
+  </NuqsAdapter>
+)
+```
+
+The React adapter supports an optional prop for full-page navigation:
+
+```tsx
+<NuqsAdapter fullPageNavigationOnShallowFalseUpdates={true}>
+  <App />
+</NuqsAdapter>
+```
+
+When enabled, setting `shallow: false` will trigger a full page reload instead of just a client-side navigation.
+
+### Remix
+
+```tsx
+import { NuqsAdapter } from 'nuqs/adapters/remix'
+import { Outlet } from '@remix-run/react'
+
+export default function App() {
+  return (
+    <NuqsAdapter>
+      <Outlet />
+    </NuqsAdapter>
+  )
+}
+```
+
+<Note>
+Supported versions: `@remix-run/react@>=2`
+</Note>
+
+### React Router v6
+
+```tsx
+import { NuqsAdapter } from 'nuqs/adapters/react-router/v6'
+import { createBrowserRouter, RouterProvider } from 'react-router-dom'
+
+const router = createBrowserRouter([
+  { path: '/', element: <App /> }
+])
+
+export function Root() {
+  return (
+    <NuqsAdapter>
+      <RouterProvider router={router} />
+    </NuqsAdapter>
+  )
+}
+```
+
+### React Router v7
+
+```tsx
+import { NuqsAdapter } from 'nuqs/adapters/react-router/v7'
+import { Outlet } from 'react-router'
+
+export default function App() {
+  return (
+    <NuqsAdapter>
+      <Outlet />
+    </NuqsAdapter>
+  )
+}
+```
+
+### TanStack Router
+
+```tsx
+import { NuqsAdapter } from 'nuqs/adapters/tanstack-router'
+import { Outlet, createRootRoute } from '@tanstack/react-router'
+
+export const Route = createRootRoute({
+  component: () => (
+    <NuqsAdapter>
+      <Outlet />
+    </NuqsAdapter>
+  )
+})
+```
+
+<Warning>
+TanStack Router support is experimental and does not yet cover TanStack Start.
+</Warning>
+
+## Testing adapter
+
+For unit testing components that use nuqs hooks:
+
+```tsx
+import { render } from '@testing-library/react'
+import { NuqsTestingAdapter } from 'nuqs/adapters/testing'
+import { describe, it, expect, vi } from 'vitest'
+
+it('should update search params', async () => {
+  const onUrlUpdate = vi.fn()
+  
+  render(<MyComponent />, {
+    wrapper: ({ children }) => (
+      <NuqsTestingAdapter 
+        searchParams="?count=42" 
+        onUrlUpdate={onUrlUpdate}
+      >
+        {children}
+      </NuqsTestingAdapter>
+    )
+  })
+  
+  // Test your component...
+  expect(onUrlUpdate).toHaveBeenCalled()
+})
+```
+
+From the README examples.
+
+## Creating custom adapters
+
+You can create custom adapters for unsupported frameworks using the `unstable_createAdapterProvider` function:
+
+```typescript
+import { 
+  unstable_createAdapterProvider,
+  type unstable_AdapterInterface 
+} from 'nuqs/adapters/custom'
+
+function useMyFrameworkAdapter(watchKeys: string[]): unstable_AdapterInterface {
+  // Implement the adapter interface
+  return {
+    searchParams: /* URLSearchParams from your framework */,
+    updateUrl: (search, options) => {
+      // Update URL using your framework's navigation
+    }
+  }
+}
+
+export const NuqsAdapter = unstable_createAdapterProvider(useMyFrameworkAdapter)
+```
+
+<Warning>
+Custom adapter APIs are marked as `unstable_` and may change in future versions.
+</Warning>
+
+## Adapter selection
+
+The Next.js adapter automatically detects whether you're using the app router or pages router at runtime:
+
+```typescript
+// From packages/nuqs/src/adapters/next.ts
+function useNuqsNextAdapter(): AdapterInterface {
+  const pagesRouterImpl = useNuqsNextPagesRouterAdapter()
+  const appRouterImpl = useNuqsNextAppRouterAdapter()
+  
+  return {
+    searchParams: appRouterImpl.searchParams,
+    updateUrl(search, options) {
+      if (isPagesRouter()) {
+        return pagesRouterImpl.updateUrl(search, options)
+      } else {
+        return appRouterImpl.updateUrl(search, options)
+      }
+    },
+    autoResetQueueOnUpdate: false
+  }
+}
+```
+
+From `packages/nuqs/src/adapters/next.ts:6-20`

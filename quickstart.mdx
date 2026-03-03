@@ -1,80 +1,329 @@
 ---
-title: "Quickstart"
-description: "Start building awesome documentation in minutes"
+title: "Quick Start"
+description: "Get up and running with nuqs in 5 minutes"
 ---
 
-## Get started in three steps
-
-Get your documentation site running locally and make your first customization.
-
-### Step 1: Set up your local environment
-
-<AccordionGroup>
-  <Accordion icon="copy" title="Clone your docs locally">
-    During the onboarding process, you created a GitHub repository with your docs content if you didn't already have one. You can find a link to this repository in your [dashboard](https://dashboard.mintlify.com).
-    
-    To clone the repository locally so that you can make and preview changes to your docs, follow the [Cloning a repository](https://docs.github.com/en/repositories/creating-and-managing-repositories/cloning-a-repository) guide in the GitHub docs.
-  </Accordion>
-  <Accordion icon="rectangle-terminal" title="Start the preview server">
-    1. Install the Mintlify CLI: `npm i -g mint`
-    2. Navigate to your docs directory and run: `mint dev`
-    3. Open `http://localhost:3000` to see your docs live!
-    
-    <Tip>Your preview updates automatically as you edit files.</Tip>
-  </Accordion>
-</AccordionGroup>
-
-### Step 2: Deploy your changes
-
-<AccordionGroup>
-  <Accordion icon="github" title="Install our GitHub app">
-    Install the Mintlify GitHub app from your [dashboard](https://dashboard.mintlify.com/settings/organization/github-app).
-    
-    Our GitHub app automatically deploys your changes to your docs site, so you don't need to manage deployments yourself.
-</Accordion>
-<Accordion icon="palette" title="Update your site name and colors">
-    For a first change, let's update the name and colors of your docs site.
-
-    1. Open `docs.json` in your editor.
-    2. Change the `"name"` field to your project name.
-    3. Update the `"colors"` to match your brand.
-    4. Save and see your changes instantly at `http://localhost:3000`.
-
-    <Tip>Try changing the primary color to see an immediate difference!</Tip>
-  </Accordion>
-</AccordionGroup>
-
-### Step 3: Go live
-
-<Accordion icon="rocket" title="Publish your docs">
-  1. Commit and push your changes.
-  2. Your docs will update and be live in moments!
-</Accordion>
-
-## Next steps
-
-Now that you have your docs running, explore these key features:
-
-<CardGroup cols={2}>
-
-<Card title="Write Content" icon="pen-to-square" href="/essentials/markdown">
-  Learn MDX syntax and start writing your documentation.
-</Card>
-
-<Card title="Customize style" icon="palette" href="/essentials/settings">
-  Make your docs match your brand perfectly.
-</Card>
-
-<Card title="Add code examples" icon="square-code" href="/essentials/code">
-  Include syntax-highlighted code blocks.
-</Card>
-
-<Card title="API documentation" icon="code" href="/api-reference/introduction">
-  Auto-generate API docs from OpenAPI specs.
-</Card>
-
-</CardGroup>
+This guide will walk you through creating a simple search interface with nuqs. You'll learn the core concepts while building something practical.
 
 <Note>
-  **Need help?** See our [full documentation](https://mintlify.com/docs) or join our [community](https://mintlify.com/community).
+  Make sure you've completed the [Installation](/installation) steps before continuing.
 </Note>
+
+## Basic Usage: Search Input
+
+Let's create a search component that stores the query in the URL.
+
+<Steps>
+  <Step title="Create your component">
+    Create a new client component (for Next.js app router, mark it with `'use client'`):
+
+    ```tsx components/Search.tsx
+    'use client' // Only needed for Next.js App Router
+
+    import { useQueryState } from 'nuqs'
+
+    export default function Search() {
+      const [search, setSearch] = useQueryState('q')
+
+      return (
+        <div>
+          <input
+            type="text"
+            value={search || ''}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search..."
+          />
+          <button onClick={() => setSearch(null)}>Clear</button>
+          {search && <p>Searching for: {search}</p>}
+        </div>
+      )
+    }
+    ```
+
+    The `useQueryState` hook works just like `useState`, but syncs with the URL query string!
+  </Step>
+
+  <Step title="Try it out">
+    Add the component to your page and start typing. Watch the URL update in real-time:
+
+    - Type "react" → URL becomes `?q=react`
+    - Click "Clear" → URL becomes `/` (query removed)
+    - Refresh the page → Your input persists!
+  </Step>
+</Steps>
+
+<Tip>
+  The URL is the source of truth. When you reload the page, the state is restored from the URL automatically.
+</Tip>
+
+## Adding Type Safety with Parsers
+
+Let's add pagination with proper number parsing:
+
+<Steps>
+  <Step title="Import parsers">
+    nuqs provides built-in parsers for common types:
+
+    ```tsx components/Pagination.tsx
+    'use client'
+
+    import { useQueryState, parseAsInteger } from 'nuqs'
+
+    export default function Pagination() {
+      const [page, setPage] = useQueryState(
+        'page',
+        parseAsInteger.withDefault(1)
+      )
+
+      return (
+        <div>
+          <p>Current page: {page}</p>
+          <button
+            onClick={() => setPage(page - 1)}
+            disabled={page <= 1}
+          >
+            Previous
+          </button>
+          <button onClick={() => setPage(page + 1)}>
+            Next
+          </button>
+          <button onClick={() => setPage(1)}>
+            Reset to page 1
+          </button>
+        </div>
+      )
+    }
+    ```
+
+    <Note>
+      Setting `page` to `1` (the default value) will clear the query from the URL automatically.
+    </Note>
+  </Step>
+
+  <Step title="Benefits of parsers">
+    - **Type safety**: `page` is always a number, never `null`
+    - **Validation**: Invalid values are rejected and fall back to the default
+    - **Serialization**: Numbers are properly converted to/from URL strings
+  </Step>
+</Steps>
+
+## Managing Multiple Query States
+
+Use `useQueryStates` to manage related queries together:
+
+<CodeGroup>
+
+```tsx components/Filter.tsx
+'use client'
+
+import { useQueryStates, parseAsInteger, parseAsStringLiteral } from 'nuqs'
+
+const sortOrders = ['asc', 'desc'] as const
+
+export default function Filter() {
+  const [filters, setFilters] = useQueryStates({
+    search: {
+      type: 'single',
+      parse: (value) => value,
+      serialize: (value) => value,
+      eq: (a, b) => a === b
+    },
+    page: parseAsInteger.withDefault(1),
+    sort: parseAsStringLiteral(sortOrders).withDefault('asc')
+  })
+
+  return (
+    <div>
+      <input
+        type="text"
+        value={filters.search || ''}
+        onChange={(e) => setFilters({
+          search: e.target.value,
+          page: 1 // Reset to page 1 when searching
+        })}
+        placeholder="Search..."
+      />
+
+      <select
+        value={filters.sort}
+        onChange={(e) => setFilters({
+          sort: e.target.value as 'asc' | 'desc',
+          page: 1
+        })}
+      >
+        <option value="asc">Ascending</option>
+        <option value="desc">Descending</option>
+      </select>
+
+      <div>
+        <p>Page: {filters.page}</p>
+        <button onClick={() => setFilters({ page: filters.page - 1 })}>
+          Previous
+        </button>
+        <button onClick={() => setFilters({ page: filters.page + 1 })}>
+          Next
+        </button>
+      </div>
+
+      <button onClick={() => setFilters(null)}>
+        Reset all filters
+      </button>
+    </div>
+  )
+}
+```
+
+```tsx Functional updates
+// You can also use functional updates
+setFilters(prev => ({
+  ...prev,
+  page: prev.page + 1
+}))
+```
+
+</CodeGroup>
+
+<Tip>
+  Multiple state updates in the same event are automatically batched into a single URL update.
+</Tip>
+
+## Next Steps
+
+You now know the basics of nuqs! Here's what to explore next:
+
+<CardGroup cols={2}>
+  <Card title="Parsers" icon="filter" href="/concepts/parsers">
+    Learn about all built-in parsers and how to create custom ones
+  </Card>
+
+  <Card title="Options" icon="sliders" href="/concepts/options">
+    Control history mode, shallow routing, and throttling
+  </Card>
+
+  <Card title="Server-Side" icon="server" href="/server/overview">
+    Use nuqs with Server Components and server-side rendering
+  </Card>
+
+  <Card title="Testing" icon="vial" href="/advanced/testing">
+    Learn how to test components that use nuqs
+  </Card>
+</CardGroup>
+
+## Common Patterns
+
+### Debouncing Input
+
+For search inputs, you might want to debounce URL updates:
+
+```tsx
+import { useQueryState } from 'nuqs'
+
+const [search, setSearch] = useQueryState('q', {
+  throttleMs: 500 // Wait 500ms before updating the URL
+})
+```
+
+### History Mode
+
+By default, URL updates replace the current history entry. To enable Back button navigation:
+
+```tsx
+import { useQueryState, parseAsInteger } from 'nuqs'
+
+const [page, setPage] = useQueryState(
+  'page',
+  parseAsInteger.withDefault(1).withOptions({
+    history: 'push' // Append to history instead of replacing
+  })
+)
+```
+
+### Server Updates (Next.js)
+
+By default, updates are client-only (shallow). To trigger server component re-renders:
+
+```tsx
+import { useQueryState } from 'nuqs'
+
+const [filter, setFilter] = useQueryState('filter', {
+  shallow: false // Notify server components of changes
+})
+```
+
+<Warning>
+  Setting `shallow: false` will cause server components to re-render, which can be slower. Only use this when you need server-side updates.
+</Warning>
+
+## Complete Example
+
+Here's a complete example combining everything:
+
+```tsx app/page.tsx
+'use client'
+
+import { useQueryStates, parseAsInteger, parseAsString } from 'nuqs'
+
+export default function ProductList() {
+  const [params, setParams] = useQueryStates({
+    search: parseAsString.withDefault(''),
+    page: parseAsInteger.withDefault(1),
+    limit: parseAsInteger.withDefault(10)
+  })
+
+  // In a real app, you'd fetch data based on these params
+  const { search, page, limit } = params
+
+  return (
+    <div>
+      <h1>Products</h1>
+
+      <input
+        type="text"
+        value={search}
+        onChange={(e) => setParams({
+          search: e.target.value,
+          page: 1
+        })}
+        placeholder="Search products..."
+      />
+
+      <select
+        value={limit}
+        onChange={(e) => setParams({
+          limit: parseInt(e.target.value),
+          page: 1
+        })}
+      >
+        <option value="10">10 per page</option>
+        <option value="25">25 per page</option>
+        <option value="50">50 per page</option>
+      </select>
+
+      {/* Your product list here */}
+      <div className="results">
+        <p>Page {page}, showing {limit} items</p>
+        {search && <p>Searching for: {search}</p>}
+      </div>
+
+      <div className="pagination">
+        <button
+          onClick={() => setParams({ page: page - 1 })}
+          disabled={page <= 1}
+        >
+          Previous
+        </button>
+        <span>Page {page}</span>
+        <button onClick={() => setParams({ page: page + 1 })}>
+          Next
+        </button>
+      </div>
+
+      <button onClick={() => setParams(null)}>
+        Clear all filters
+      </button>
+    </div>
+  )
+}
+```
+
+This creates a URL like: `?search=laptop&page=2&limit=25`

@@ -1,0 +1,232 @@
+---
+title: 'createLoader'
+description: 'API reference for the createLoader function'
+---
+
+## Overview
+
+The `createLoader` function creates a type-safe loader for parsing search parameters from various input types. It's designed for one-off parsing operations in loaders, API routes, server components, and other server-side contexts.
+
+## Function Signature
+
+```ts
+function createLoader<Parsers extends ParserMap>(
+  parsers: Parsers,
+  options?: CreateLoaderOptions<Parsers>
+): LoaderFunction<Parsers>
+```
+
+## Parameters
+
+<ParamField path="parsers" type="ParserMap" required>
+  An object mapping search param keys to their parser configurations. Each parser defines how to parse and serialize values.
+  
+  ```ts
+  const parsers = {
+    q: parseAsString,
+    page: parseAsInteger.withDefault(1),
+    tags: parseAsArrayOf(parseAsString)
+  }
+  ```
+</ParamField>
+
+<ParamField path="options" type="CreateLoaderOptions<Parsers>">
+  Optional configuration object.
+  
+  <Expandable title="properties">
+    <ParamField path="urlKeys" type="UrlKeys<Parsers>">
+      Map internal state keys to different URL query parameter names.
+      
+      ```ts
+      type UrlKeys<Parsers> = Partial<Record<keyof Parsers, string>>
+      ```
+      
+      Example:
+      ```ts
+      const loadSearchParams = createLoader(
+        { query: parseAsString },
+        { urlKeys: { query: 'q' } }  // URL uses ?q=... instead of ?query=...
+      )
+      ```
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+## Return Value
+
+Returns a `LoaderFunction` with the following signature:
+
+```ts
+type LoaderFunction<Parsers extends ParserMap> = {
+  // Synchronous overload
+  (
+    input: LoaderInput,
+    options?: LoaderFunctionOptions
+  ): inferParserType<Parsers>
+  
+  // Asynchronous overload (for Next.js 15+ Promise searchParams)
+  (
+    input: Promise<LoaderInput>,
+    options?: LoaderFunctionOptions
+  ): Promise<inferParserType<Parsers>>
+}
+```
+
+### LoaderInput
+
+The loader accepts multiple input types:
+
+```ts
+type LoaderInput =
+  | URL
+  | Request
+  | URLSearchParams
+  | Record<string, string | string[] | undefined>
+  | string
+```
+
+### LoaderFunctionOptions
+
+<ParamField path="strict" type="boolean" default={false}>
+  Whether to use strict parsing. If `true`, the loader will throw an error if any of the parsers fail to parse their respective values. If `false`, the loader will return `null` or their default value for any failed parsers.
+  
+  ```ts
+  type LoaderFunctionOptions = {
+    strict?: boolean
+  }
+  ```
+</ParamField>
+
+## Type Definitions
+
+### ParserMap
+
+```ts
+type ParserMap = Record<string, ParserWithOptionalDefault<any>>
+
+type ParserWithOptionalDefault<T> = GenericParserBuilder<T> & {
+  defaultValue?: T
+}
+```
+
+### inferParserType
+
+TypeScript automatically infers the return type based on your parsers:
+
+```ts
+const loadSearchParams = createLoader({
+  count: parseAsInteger,                      // number | null
+  active: parseAsBoolean.withDefault(false),  // boolean
+  tags: parseAsArrayOf(parseAsString)         // string[] | null
+})
+
+const params = loadSearchParams(request)
+// TypeScript infers:
+// params: {
+//   count: number | null,
+//   active: boolean,
+//   tags: string[] | null
+// }
+```
+
+## Examples
+
+### Basic Usage
+
+```ts
+import { createLoader, parseAsString, parseAsInteger } from 'nuqs/server'
+
+const loadSearchParams = createLoader({
+  q: parseAsString,
+  page: parseAsInteger.withDefault(1)
+})
+
+const { q, page } = loadSearchParams('?q=hello&page=2')
+// q: string | null
+// page: number
+```
+
+### With URL Object
+
+```ts
+const url = new URL('https://example.com/search?q=hello&page=2')
+const { q, page } = loadSearchParams(url)
+```
+
+### With Request Object
+
+```ts
+export async function GET(request: Request) {
+  const params = loadSearchParams(request)
+  // ...
+}
+```
+
+### With Next.js 15 Async searchParams
+
+```ts
+const loadSearchParams = createLoader({
+  q: parseAsString,
+  page: parseAsInteger.withDefault(1)
+})
+
+export default async function Page({ searchParams }) {
+  const { q, page } = await loadSearchParams(searchParams)
+  // ...
+}
+```
+
+### Strict Mode
+
+```ts
+const loadSearchParams = createLoader({
+  page: parseAsInteger
+})
+
+try {
+  // This will throw because "abc" is not a valid integer
+  const { page } = loadSearchParams('?page=abc', { strict: true })
+} catch (error) {
+  console.error(error)
+  // Error: [nuqs] Error while parsing query `abc` for key `page`
+}
+
+// Without strict mode, invalid values return null or default
+const { page } = loadSearchParams('?page=abc')  // page: null
+```
+
+### URL Keys Mapping
+
+```ts
+const loadSearchParams = createLoader(
+  {
+    searchQuery: parseAsString,
+    pageNumber: parseAsInteger.withDefault(1)
+  },
+  {
+    urlKeys: {
+      searchQuery: 'q',
+      pageNumber: 'page'
+    }
+  }
+)
+
+// URL: ?q=laptop&page=2
+const { searchQuery, pageNumber } = loadSearchParams('?q=laptop&page=2')
+// searchQuery: "laptop"
+// pageNumber: 2
+```
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="Loaders Guide" icon="download" href="/server/loaders">
+    Learn how to use loaders in different frameworks
+  </Card>
+  <Card title="createSearchParamsCache" icon="database" href="/api/server/create-search-params-cache">
+    Cache search params in server components
+  </Card>
+  <Card title="Parsers" icon="code" href="/concepts/parsers">
+    Learn about available parser types
+  </Card>
+</CardGroup>

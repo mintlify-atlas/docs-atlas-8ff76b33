@@ -1,0 +1,478 @@
+---
+title: 'createSerializer'
+description: 'API reference for the createSerializer function'
+---
+
+## Overview
+
+The `createSerializer` function creates a type-safe serializer for generating URLs with search parameters. It's useful for creating links, redirects, and programmatic navigation with properly formatted query strings.
+
+## Function Signature
+
+```ts
+function createSerializer<
+  Parsers extends ParserMap,
+  BaseType extends Base = Base,
+  Return = string
+>(
+  parsers: Parsers,
+  options?: CreateSerializerOptions<Parsers>
+): SerializeFunction<Parsers, BaseType, Return>
+```
+
+## Parameters
+
+<ParamField path="parsers" type="ParserMap" required>
+  An object mapping search param keys to their parser configurations.
+  
+  ```ts
+  const parsers = {
+    q: parseAsString,
+    page: parseAsInteger,
+    category: parseAsString
+  }
+  ```
+</ParamField>
+
+<ParamField path="options" type="CreateSerializerOptions<Parsers>">
+  Optional configuration object.
+  
+  <Expandable title="properties">
+    <ParamField path="clearOnDefault" type="boolean" default={true}>
+      When `true`, values matching their parser's default value will be omitted from the URL to keep URLs clean.
+      
+      ```ts
+      const serialize = createSerializer(
+        { page: parseAsInteger.withDefault(1) },
+        { clearOnDefault: true }
+      )
+      
+      serialize({ page: 1 })  // "" (omitted because it's the default)
+      serialize({ page: 2 })  // "?page=2"
+      ```
+    </ParamField>
+    
+    <ParamField path="urlKeys" type="UrlKeys<Parsers>">
+      Map internal state keys to different URL query parameter names.
+      
+      ```ts
+      type UrlKeys<Parsers> = Partial<Record<keyof Parsers, string>>
+      ```
+      
+      Example:
+      ```ts
+      const serialize = createSerializer(
+        { query: parseAsString },
+        { urlKeys: { query: 'q' } }
+      )
+      
+      serialize({ query: 'laptop' })  // "?q=laptop"
+      ```
+    </ParamField>
+    
+    <ParamField path="processUrlSearchParams" type="(searchParams: URLSearchParams) => URLSearchParams">
+      A function to post-process the URLSearchParams before serialization. Useful for adding custom logic or additional parameters.
+      
+      ```ts
+      const serialize = createSerializer(
+        { q: parseAsString },
+        {
+          processUrlSearchParams: (params) => {
+            params.set('utm_source', 'app')
+            params.sort()
+            return params
+          }
+        }
+      )
+      ```
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+## Return Value
+
+Returns a `SerializeFunction` with two overloads:
+
+```ts
+type SerializeFunction<
+  Parsers extends ParserMap,
+  BaseType extends Base = Base,
+  Return = string
+> = {
+  // Generate query string from values
+  (values: Partial<Nullable<inferParserType<Parsers>>>): Return
+  
+  // Append/amend query string to base URL
+  (
+    base: BaseType,
+    values: Partial<Nullable<inferParserType<Parsers>>> | null
+  ): Return
+}
+```
+
+### Base Types
+
+```ts
+type Base = string | URLSearchParams | URL
+```
+
+### Nullable Type Helper
+
+```ts
+type Nullable<T> = {
+  [K in keyof T]: T[K] | null
+}
+```
+
+Values can be set to `null` to remove them from the URL.
+
+## Type Definitions
+
+### ParserMap
+
+```ts
+type ParserMap = Record<string, ParserWithOptionalDefault<any>>
+
+type ParserWithOptionalDefault<T> = GenericParserBuilder<T> & {
+  defaultValue?: T
+}
+```
+
+### CreateSerializerOptions
+
+```ts
+type CreateSerializerOptions<Parsers extends ParserMap> = Pick<
+  Options,
+  'clearOnDefault'
+> & {
+  urlKeys?: UrlKeys<Parsers>
+  processUrlSearchParams?: (searchParams: URLSearchParams) => URLSearchParams
+}
+```
+
+### inferParserType
+
+TypeScript automatically infers types based on your parsers:
+
+```ts
+const serialize = createSerializer({
+  count: parseAsInteger,
+  active: parseAsBoolean,
+  tags: parseAsArrayOf(parseAsString)
+})
+
+// TypeScript knows the shape of the values object
+serialize({
+  count: 42,        // number | null
+  active: true,     // boolean | null
+  tags: ['a', 'b']  // string[] | null
+})
+```
+
+## Examples
+
+### Generate Query String
+
+```ts
+import { createSerializer, parseAsString, parseAsInteger } from 'nuqs/server'
+
+const serialize = createSerializer({
+  q: parseAsString,
+  page: parseAsInteger,
+  category: parseAsString
+})
+
+serialize({ q: 'laptop', page: 2 })
+// "?q=laptop&page=2"
+
+serialize({ category: 'electronics' })
+// "?category=electronics"
+```
+
+### Append to Base URL
+
+```ts
+const serialize = createSerializer({
+  q: parseAsString,
+  page: parseAsInteger
+})
+
+// Append to a path
+serialize('/search', { q: 'laptop', page: 2 })
+// "/search?q=laptop&page=2"
+
+// Amend existing query string
+serialize('/search?sort=price', { q: 'laptop' })
+// "/search?sort=price&q=laptop"
+
+// Use with URL object
+const url = new URL('https://example.com/search')
+serialize(url, { q: 'laptop' })
+// "https://example.com/search?q=laptop"
+
+// Use with URLSearchParams
+const params = new URLSearchParams('?sort=price')
+serialize(params, { q: 'laptop' })
+// "?sort=price&q=laptop"
+```
+
+### Remove Parameters with null
+
+```ts
+const serialize = createSerializer({
+  q: parseAsString,
+  page: parseAsInteger,
+  category: parseAsString
+})
+
+// Remove specific parameters
+serialize('/search?q=laptop&page=2&category=electronics', {
+  category: null  // Remove category
+})
+// "/search?q=laptop&page=2"
+
+// Remove all parameters by passing null as second argument
+serialize('/search?q=laptop&page=2', null)
+// "/search"
+```
+
+### Default Value Behavior
+
+```ts
+const serialize = createSerializer({
+  page: parseAsInteger.withDefault(1),
+  limit: parseAsInteger.withDefault(20)
+})
+
+serialize({ page: 1, limit: 20 })
+// "" (both values are defaults, so omitted)
+
+serialize({ page: 2, limit: 20 })
+// "?page=2" (limit omitted because it's the default)
+
+serialize({ page: 1, limit: 50 })
+// "?limit=50" (page omitted because it's the default)
+```
+
+### Disable clearOnDefault
+
+```ts
+const serialize = createSerializer(
+  {
+    page: parseAsInteger.withDefault(1)
+  },
+  { clearOnDefault: false }
+)
+
+serialize({ page: 1 })
+// "?page=1" (included even though it's the default)
+```
+
+### URL Keys Mapping
+
+```ts
+const serialize = createSerializer(
+  {
+    searchQuery: parseAsString,
+    pageNumber: parseAsInteger,
+    itemsPerPage: parseAsInteger
+  },
+  {
+    urlKeys: {
+      searchQuery: 'q',
+      pageNumber: 'page',
+      itemsPerPage: 'limit'
+    }
+  }
+)
+
+serialize({
+  searchQuery: 'laptop',
+  pageNumber: 2,
+  itemsPerPage: 50
+})
+// "?q=laptop&page=2&limit=50"
+```
+
+### Post-Processing
+
+```ts
+const serialize = createSerializer(
+  {
+    q: parseAsString,
+    page: parseAsInteger
+  },
+  {
+    processUrlSearchParams: (params) => {
+      // Add analytics parameters
+      params.set('utm_source', 'app')
+      params.set('utm_medium', 'link')
+      
+      // Sort parameters alphabetically
+      params.sort()
+      
+      return params
+    }
+  }
+)
+
+serialize({ q: 'laptop', page: 2 })
+// "?page=2&q=laptop&utm_medium=link&utm_source=app"
+```
+
+### With Link Components (Next.js)
+
+```tsx
+import Link from 'next/link'
+import { createSerializer, parseAsString, parseAsInteger } from 'nuqs/server'
+
+const serialize = createSerializer({
+  q: parseAsString,
+  page: parseAsInteger,
+  category: parseAsString
+})
+
+export function ProductLink({ category }: { category: string }) {
+  return (
+    <Link href={serialize('/products', { category, page: 1 })}>
+      View {category}
+    </Link>
+  )
+}
+
+export function PaginationLink({ page }: { page: number }) {
+  return (
+    <Link href={serialize({ page })}>
+      Page {page}
+    </Link>
+  )
+}
+```
+
+### Server-Side Redirects (Next.js)
+
+```tsx
+import { redirect } from 'next/navigation'
+import { createSerializer, parseAsString } from 'nuqs/server'
+
+const serialize = createSerializer({
+  q: parseAsString
+})
+
+export async function searchAction(formData: FormData) {
+  'use server'
+  
+  const query = formData.get('q') as string
+  
+  // Redirect to search results
+  redirect(serialize('/search', { q: query }))
+}
+```
+
+### API Routes
+
+```tsx
+import { createSerializer, parseAsInteger } from 'nuqs/server'
+
+const serialize = createSerializer({
+  page: parseAsInteger,
+  limit: parseAsInteger
+})
+
+export async function GET(request: Request) {
+  const nextPageUrl = serialize(
+    new URL(request.url),
+    { page: 2, limit: 20 }
+  )
+  
+  return Response.json({
+    data: [...],
+    nextPage: nextPageUrl
+  })
+}
+```
+
+### Complex Serialization
+
+```tsx
+import {
+  createSerializer,
+  parseAsString,
+  parseAsInteger,
+  parseAsArrayOf,
+  parseAsIsoDateTime,
+  parseAsStringLiteral
+} from 'nuqs/server'
+
+const serialize = createSerializer(
+  {
+    search: parseAsString,
+    page: parseAsInteger.withDefault(1),
+    limit: parseAsInteger.withDefault(20),
+    tags: parseAsArrayOf(parseAsString),
+    from: parseAsIsoDateTime,
+    to: parseAsIsoDateTime,
+    sortBy: parseAsStringLiteral(['asc', 'desc'] as const)
+  },
+  {
+    urlKeys: {
+      search: 'q',
+      limit: 'per_page'
+    }
+  }
+)
+
+serialize({
+  search: 'laptop',
+  page: 2,
+  tags: ['electronics', 'sale'],
+  from: new Date('2024-01-01'),
+  sortBy: 'desc'
+})
+// "?q=laptop&page=2&tags=electronics,sale&from=2024-01-01T00:00:00.000Z&sortBy=desc"
+```
+
+## Type Safety
+
+The serializer is fully type-safe:
+
+```tsx
+const serialize = createSerializer({
+  count: parseAsInteger,
+  active: parseAsBoolean,
+  tags: parseAsArrayOf(parseAsString)
+})
+
+// ✅ Valid
+serialize({
+  count: 42,
+  active: true,
+  tags: ['a', 'b']
+})
+
+// ❌ TypeScript error: wrong type
+serialize({ count: 'not a number' })
+
+// ❌ TypeScript error: unknown key
+serialize({ unknown: 'value' })
+
+// ✅ Valid: null removes parameter
+serialize({ count: null })
+```
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="Serializer Guide" icon="link" href="/server/serializer">
+    Learn how to use serializers for URLs
+  </Card>
+  <Card title="createLoader" icon="download" href="/api/server/create-loader">
+    Parse search params with createLoader
+  </Card>
+  <Card title="createSearchParamsCache" icon="database" href="/api/server/create-search-params-cache">
+    Cache search params in server components
+  </Card>
+  <Card title="Parsers" icon="code" href="/concepts/parsers">
+    Learn about available parser types
+  </Card>
+</CardGroup>

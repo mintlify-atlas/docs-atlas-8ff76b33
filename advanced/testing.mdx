@@ -1,0 +1,272 @@
+---
+title: Testing
+description: Testing components with NuqsTestingAdapter and testing custom parsers
+---
+
+Since nuqs 2, you can unit-test components that use `useQueryState(s){:ts}` hooks
+without needing to mock anything, by using a dedicated testing adapter that will
+facilitate **setting up** your tests (with initial search params) and **asserting**
+on URL changes when **acting** on your components.
+
+## NuqsTestingAdapter
+
+The `NuqsTestingAdapter{:ts}` component provides a test environment for components
+using nuqs hooks. It simulates the URL state management without requiring a real router.
+
+### Basic setup
+
+Wrap your component under test with the `NuqsTestingAdapter{:ts}`:
+
+```tsx
+import { NuqsTestingAdapter } from 'nuqs/adapters/testing'
+import { render } from '@testing-library/react'
+
+render(
+  <NuqsTestingAdapter searchParams="?count=42">
+    <YourComponent />
+  </NuqsTestingAdapter>
+)
+```
+
+### Using withNuqsTestingAdapter
+
+For testing libraries that support wrapper functions, use `withNuqsTestingAdapter{:ts}`:
+
+```tsx
+import { withNuqsTestingAdapter } from 'nuqs/adapters/testing'
+import { renderHook } from '@testing-library/react'
+
+const { result } = renderHook(() => useTheHookToTest(), {
+  wrapper: withNuqsTestingAdapter({
+    searchParams: { count: "42" },
+  }),
+})
+```
+
+## Testing with Vitest
+
+Here is a complete example using Vitest and Testing Library:
+
+```tsx title="counter-button.test.tsx"
+import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { withNuqsTestingAdapter, type OnUrlUpdateFunction } from 'nuqs/adapters/testing'
+import { describe, expect, it, vi } from 'vitest'
+import { CounterButton } from './counter-button'
+
+it('should increment the count when clicked', async () => {
+  const user = userEvent.setup()
+  const onUrlUpdate = vi.fn<OnUrlUpdateFunction>()
+  render(<CounterButton />, {
+    // 1. Setup the test by passing initial search params / querystring:
+    wrapper: withNuqsTestingAdapter({ searchParams: '?count=42', onUrlUpdate })
+  })
+  // 2. Act
+  const button = screen.getByRole('button')
+  await user.click(button)
+  // 3. Assert changes in the state and in the (mocked) URL
+  expect(button).toHaveTextContent('count is 43')
+  expect(onUrlUpdate).toHaveBeenCalledOnce()
+  const event = onUrlUpdate.mock.calls[0]![0]!
+  expect(event.queryString).toBe('?count=43')
+  expect(event.searchParams.get('count')).toBe('43')
+  expect(event.options.history).toBe('push')
+})
+```
+
+## Testing with Jest
+
+Since nuqs 2 is an [ESM-only package](https://gist.github.com/sindresorhus/a39789f98801d908bbc7ff3ecc99d99c),
+there are a few hoops you need to jump through to make it work with Jest.
+This is extracted from the [Jest ESM guide](https://jestjs.io/docs/ecmascript-modules).
+
+1. Add the following options to your jest.config.ts file:
+
+```ts title="jest.config.ts"
+const config: Config = {
+  // <Other options here>
+  extensionsToTreatAsEsm: [".ts", ".tsx"],
+  transform: {}
+};
+```
+
+2. Change your test command to include the `--experimental-vm-modules` flag:
+
+```json title="package.json"
+{
+  "scripts": {
+    "test": "NODE_OPTIONS=\"$NODE_OPTIONS --experimental-vm-modules\" jest"
+  }
+}
+```
+
+<Note>
+Adapt accordingly for Windows with [`cross-env`](https://www.npmjs.com/package/cross-env).
+</Note>
+
+## API Reference
+
+### searchParams
+
+The initial search params to use for the test. These can be a query string, a `URLSearchParams` object or a record object with string values.
+
+```tsx
+// As a query string
+withNuqsTestingAdapter({
+  searchParams: '?q=hello&limit=10'
+})
+
+// As URLSearchParams
+withNuqsTestingAdapter({
+  searchParams: new URLSearchParams('?q=hello&limit=10')
+})
+
+// As an object
+withNuqsTestingAdapter({
+  searchParams: {
+    q: 'hello',
+    limit: '10' // Values are serialized strings
+  }
+})
+```
+
+### onUrlUpdate
+
+A function that will be called when the URL is updated by the component. It receives an object with:
+
+- `searchParams{:ts}`: the new search params as an instance of `URLSearchParams{:ts}`
+- `queryString{:ts}`: the new rendered query string (for convenience)
+- `options{:ts}`: the options used to update the URL
+
+```tsx
+import { type UrlUpdateEvent } from 'nuqs/adapters/testing'
+
+const onUrlUpdate = (event: UrlUpdateEvent) => {
+  console.log(event.queryString) // '?count=43'
+  console.log(event.searchParams.get('count')) // '43'
+  console.log(event.options.history) // 'push' | 'replace'
+}
+```
+
+### hasMemory
+
+By default, the testing adapter is **immutable**, meaning it will always use the initial search params as a base for URL updates. This encourages testing units of behaviour in a single test.
+
+To make it behave like framework adapters (which do store the updates in the URL), set `hasMemory: true{:ts}`, so subsequent updates build up on the previous state:
+
+```tsx
+withNuqsTestingAdapter({
+  searchParams: '?count=0',
+  hasMemory: true
+})
+```
+
+This memory is per-adapter instance, and so is isolated between tests, but shared for components under the same adapter.
+
+### Advanced options
+
+<Accordion title="Internal/advanced options">
+
+- `rateLimitFactor{:ts}`: By default, rate limiting is disabled when testing, as it can lead to unexpected behaviours. Setting this to 1 will enable rate limiting with the same factor as in production.
+
+- `resetUrlUpdateQueueOnMount{:ts}`: clear the URL update queue before running the test. This is `true{:ts}` by default to isolate tests, but you can set it to `false{:ts}` to keep the URL update queue between renders and match the production behaviour more closely.
+
+- `autoResetQueueOnUpdate{:ts}`: automatically reset the update queue after each URL update. Defaults to `true{:ts}`.
+
+</Accordion>
+
+## Testing custom parsers
+
+If you create custom parsers with `createParser{:ts}`, you will likely want to test them.
+
+Parsers should:
+1. Define pure functions for `parse{:ts}`, `serialize{:ts}`, and `eq{:ts}`.
+2. Be bijective: `parse(serialize(x)) === x{:ts}` and `serialize(parse(x)) === x{:ts}`.
+
+To help test bijectivity, you can use helpers defined in `nuqs/testing`:
+
+```ts
+import {
+  isParserBijective,
+  testParseThenSerialize,
+  testSerializeThenParse
+} from 'nuqs/testing'
+
+it('is bijective', () => {
+  // Passing tests return true
+  expect(isParserBijective(parseAsInteger, '42', 42)).toBe(true)
+  // Failing test throws an error
+  expect(() => isParserBijective(parseAsInteger, '42', 47)).toThrowError()
+
+  // You can also test either side separately:
+  expect(testParseThenSerialize(parseAsInteger, '42')).toBe(true)
+  expect(testSerializeThenParse(parseAsInteger, 42)).toBe(true)
+  // Those will also throw an error if the test fails,
+  // which makes it easier to isolate which side failed:
+  expect(() => testParseThenSerialize(parseAsInteger, 'not a number')).toThrowError()
+  expect(() => testSerializeThenParse(parseAsInteger, NaN)).toThrowError()
+})
+```
+
+### Testing parser functions
+
+The helper functions perform the following checks:
+
+**`isParserBijective(parser, serialized, input){:ts}`**
+
+Tests that a parser is bijective by:
+- Serializing the input and comparing to expected serialized value
+- Parsing the serialized value and comparing to expected input value
+- Using the parser's `eq{:ts}` function (if provided) for value comparison
+
+**`testSerializeThenParse(parser, input){:ts}`**
+
+Tests one direction: serialize the input, then parse it back and verify it matches the original input.
+
+**`testParseThenSerialize(parser, serialized){:ts}`**
+
+Tests the other direction: parse the serialized string, then serialize it back and verify it matches the original string.
+
+## Example: Testing a custom hex parser
+
+```ts title="hex-color.test.ts"
+import { describe, expect, it } from 'vitest'
+import { createParser, parseAsHex } from 'nuqs'
+import { isParserBijective } from 'nuqs/testing'
+
+const hexColorParser = createParser({
+  parse(query) {
+    if (query.length !== 6) return null
+    return {
+      r: parseAsHex.parse(query.slice(0, 2)) ?? 0x00,
+      g: parseAsHex.parse(query.slice(2, 4)) ?? 0x00,
+      b: parseAsHex.parse(query.slice(4)) ?? 0x00
+    }
+  },
+  serialize({ r, g, b }) {
+    return (
+      parseAsHex.serialize(r) +
+      parseAsHex.serialize(g) +
+      parseAsHex.serialize(b)
+    )
+  },
+  eq(a, b) {
+    return a.r === b.r && a.g === b.g && a.b === b.b
+  }
+})
+
+describe('hexColorParser', () => {
+  it('should parse and serialize hex colors', () => {
+    const color = { r: 0x66, g: 0x33, b: 0x99 }
+    expect(isParserBijective(hexColorParser, '663399', color)).toBe(true)
+  })
+
+  it('should return null for invalid input', () => {
+    expect(hexColorParser.parse('invalid')).toBe(null)
+    expect(hexColorParser.parse('12345')).toBe(null) // too short
+    expect(hexColorParser.parse('1234567')).toBe(null) // too long
+  })
+})
+```
+
+See issue [#259](https://github.com/47ng/nuqs/issues/259) for more testing-related discussions.

@@ -1,0 +1,241 @@
+---
+title: React (SPA) Adapter
+description: Setup and configure nuqs for plain React single-page applications
+---
+
+The React adapter enables nuqs to work with plain React applications (SPAs) built with tools like Vite, Create React App, or any other React setup without a framework router.
+
+## Installation
+
+<Steps>
+  <Step title="Install nuqs">
+    Install nuqs in your React project:
+
+    ```bash
+    npm install nuqs
+    ```
+
+    ```bash
+    pnpm add nuqs
+    ```
+
+    ```bash
+    yarn add nuqs
+    ```
+  </Step>
+
+  <Step title="Wrap your app with the adapter">
+    Import and wrap your application with `NuqsAdapter` in your root entry file:
+
+    ```tsx title="src/main.tsx"
+    import { NuqsAdapter } from 'nuqs/adapters/react'
+import { createRoot } from 'react-dom/client'
+import App from './App'
+
+createRoot(document.getElementById('root')!).render(
+  <NuqsAdapter>
+    <App />
+  </NuqsAdapter>
+)
+    ```
+
+    <Note>
+      The adapter must wrap your entire application to provide the necessary context for nuqs hooks.
+    </Note>
+  </Step>
+
+  <Step title="Use nuqs hooks in your components">
+    Now you can use `useQueryState` and `useQueryStates` anywhere in your app:
+
+    ```tsx title="src/components/Search.tsx"
+    import { useQueryState } from 'nuqs'
+
+export function Search() {
+  const [search, setSearch] = useQueryState('q')
+
+  return (
+    <div>
+      <input
+        value={search || ''}
+        onChange={(e) => setSearch(e.target.value)}
+        placeholder="Search..."
+      />
+      <p>Search query: {search || 'none'}</p>
+    </div>
+  )
+}
+    ```
+  </Step>
+</Steps>
+
+## Version Requirements
+
+- **React**: `>=18.2.0` or `^19.0.0-0`
+
+## Features
+
+### History Syncing
+
+By default, the React adapter only syncs with nuqs internal updates. To enable syncing with external History API updates, use `enableHistorySync()`:
+
+```tsx title="src/main.tsx"
+import { NuqsAdapter, enableHistorySync } from 'nuqs/adapters/react'
+import { createRoot } from 'react-dom/client'
+import App from './App'
+
+enableHistorySync()
+
+createRoot(document.getElementById('root')!).render(
+  <NuqsAdapter>
+    <App />
+  </NuqsAdapter>
+)
+```
+
+This enables `useOptimisticSearchParams` to react to third-party code that directly updates the History API.
+
+### Full Page Navigation on Shallow False
+
+By default, setting `shallow: false` uses the History API. To trigger full page navigations instead:
+
+```tsx title="src/main.tsx"
+import { NuqsAdapter } from 'nuqs/adapters/react'
+import { createRoot } from 'react-dom/client'
+import App from './App'
+
+createRoot(document.getElementById('root')!).render(
+  <NuqsAdapter fullPageNavigationOnShallowFalseUpdates={true}>
+    <App />
+  </NuqsAdapter>
+)
+```
+
+With this option enabled:
+
+```tsx
+const [state, setState] = useQueryState('key', { shallow: false })
+// Will trigger location.assign() or location.replace()
+// instead of history.pushState() or history.replaceState()
+```
+
+### Browser Back/Forward Support
+
+The adapter automatically listens to `popstate` events, so the browser's back and forward buttons work out of the box:
+
+```tsx
+const [count, setCount] = useQueryState('count', parseAsInteger, {
+  history: 'push' // Each update creates a new history entry
+})
+
+// User can navigate back/forward through count changes
+```
+
+## How It Works
+
+The React adapter:
+
+1. Reads search params directly from `location.search`
+2. Updates the URL using the History API (`history.pushState` / `history.replaceState`)
+3. Listens to `popstate` events for back/forward navigation
+4. Uses an internal event emitter to sync state across components
+5. Batches and throttles URL updates to avoid rate limiting
+
+## Usage with React Router
+
+If you're using React Router, use the dedicated React Router adapters instead:
+
+- [React Router v6](/adapters/react-router#v6)
+- [React Router v7](/adapters/react-router#v7)
+
+These adapters integrate more deeply with React Router's navigation system.
+
+## Examples
+
+### Search with Debouncing
+
+```tsx
+import { useQueryState, parseAsString } from 'nuqs'
+import { useState, useEffect } from 'react'
+
+export function DebouncedSearch() {
+  const [search, setSearch] = useQueryState('q', parseAsString)
+  const [localValue, setLocalValue] = useState(search || '')
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      setSearch(localValue || null)
+    }, 300)
+    return () => clearTimeout(timer)
+  }, [localValue, setSearch])
+
+  return (
+    <input
+      value={localValue}
+      onChange={(e) => setLocalValue(e.target.value)}
+      placeholder="Search..."
+    />
+  )
+}
+```
+
+### Filters with Multiple States
+
+```tsx
+import { useQueryStates, parseAsString, parseAsInteger } from 'nuqs'
+
+export function ProductFilters() {
+  const [filters, setFilters] = useQueryStates({
+    category: parseAsString,
+    minPrice: parseAsInteger,
+    maxPrice: parseAsInteger,
+    inStock: parseAsBoolean
+  })
+
+  return (
+    <div>
+      <select
+        value={filters.category || ''}
+        onChange={(e) => setFilters({ category: e.target.value || null })}
+      >
+        <option value="">All Categories</option>
+        <option value="electronics">Electronics</option>
+        <option value="clothing">Clothing</option>
+      </select>
+      
+      {/* More filter controls */}
+      
+      <button onClick={() => setFilters({
+        category: null,
+        minPrice: null,
+        maxPrice: null,
+        inStock: null
+      })}>
+        Clear All Filters
+      </button>
+    </div>
+  )
+}
+```
+
+## Troubleshooting
+
+### State not syncing across components
+
+Make sure all components using nuqs hooks are children of the `NuqsAdapter`.
+
+### URL not updating
+
+Check that:
+1. Your app is running in a browser environment (not SSR)
+2. The `NuqsAdapter` is properly mounted
+3. You're not accidentally calling `preventDefault()` or similar on navigation events
+
+### History API errors in Safari
+
+Safari has stricter rate limits on History API calls. If you're seeing errors, increase the throttle time:
+
+```tsx
+const [state, setState] = useQueryState('key', {
+  throttleMs: 340 // Safari-safe throttle time
+})
+```

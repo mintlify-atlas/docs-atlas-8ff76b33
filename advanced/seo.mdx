@@ -1,0 +1,247 @@
+---
+title: SEO Considerations
+description: Canonical URLs and SEO best practices when using query strings for state
+---
+
+When using query strings to manage client-side state, it's important to consider
+the SEO implications. Search engines may index multiple variations of the same page
+with different query parameters, leading to duplicate content issues.
+
+## Canonical URLs for local state
+
+If your page uses query strings for **local-only state** (like UI preferences, filters,
+or pagination), you should add a canonical URL to your page. This tells SEO crawlers
+to ignore the query string and index the page without it.
+
+### Next.js App Router
+
+In the Next.js app router, this is done via the metadata object:
+
+```ts title="app/products/page.tsx"
+import type { Metadata } from 'next'
+
+export const metadata: Metadata = {
+  alternates: {
+    canonical: '/products' // URL path without query string
+  }
+}
+
+export default function ProductsPage() {
+  // Component using nuqs for filters, sorting, etc.
+  return <ProductList />
+}
+```
+
+### Next.js Pages Router
+
+For the pages router, use the `Head` component:
+
+```tsx title="pages/products.tsx"
+import Head from 'next/head'
+
+export default function ProductsPage() {
+  return (
+    <>
+      <Head>
+        <link rel="canonical" href="https://example.com/products" />
+      </Head>
+      <ProductList />
+    </>
+  )
+}
+```
+
+## Canonical URLs with meaningful query strings
+
+If however the query string is **defining what content** the page is displaying
+(like YouTube's watch URLs: `https://www.youtube.com/watch?v=dQw4w9WgXcQ`),
+your canonical URL should contain the relevant query strings.
+
+You can use your parsers to read the search params and serialize the canonical URL:
+
+```ts title="app/watch/page.tsx"
+import type { Metadata } from 'next'
+import { notFound } from 'next/navigation'
+import {
+  createParser,
+  createLoader,
+  createSerializer,
+  type SearchParams,
+  type UrlKeys
+} from 'nuqs/server'
+
+const youTubeVideoIdRegex = /^[^"&?\/\s]{11}$/i
+
+const youTubeSearchParams = {
+  videoId: createParser({
+    parse(query) {
+      if (!youTubeVideoIdRegex.test(query)) {
+        return null
+      }
+      return query
+    },
+    serialize(videoId) {
+      return videoId
+    }
+  })
+}
+
+const youTubeUrlKeys: UrlKeys<typeof youTubeSearchParams> = {
+  videoId: 'v'
+}
+
+const loadYouTubeSearchParams = createLoader(
+  youTubeSearchParams,
+  { urlKeys: youTubeUrlKeys }
+)
+
+const serializeYouTubeSearchParams = createSerializer(
+  youTubeSearchParams,
+  { urlKeys: youTubeUrlKeys }
+)
+
+type Props = {
+  searchParams: Promise<SearchParams>
+}
+
+export async function generateMetadata({
+  searchParams
+}: Props): Promise<Metadata> {
+  const { videoId } = await loadYouTubeSearchParams(searchParams)
+  if (!videoId) {
+    notFound()
+  }
+  return {
+    alternates: {
+      canonical: serializeYouTubeSearchParams('/watch', { videoId })
+      // Result: /watch?v=dQw4w9WgXcQ
+    }
+  }
+}
+
+export default async function WatchPage({ searchParams }: Props) {
+  const { videoId } = await loadYouTubeSearchParams(searchParams)
+  return <VideoPlayer videoId={videoId} />
+}
+```
+
+## When to use canonical URLs
+
+Use canonical URLs when:
+
+- **UI state**: Filters, sorting, view modes, expanded sections
+- **Pagination**: Page numbers that don't change core content
+- **Client preferences**: Theme, language (if not affecting content), layout options
+- **Temporary state**: Modal open/close, selected tab
+
+**Don't use** canonical URLs (or include query params in canonical) when:
+
+- **Content identification**: Unique resource IDs (like video IDs, article slugs)
+- **Search queries**: User search terms that change results
+- **Deep linking**: State that defines what the user should see
+- **Shareability**: URLs meant to be bookmarked or shared
+
+## Multiple query parameters
+
+When you have multiple query parameters, decide which ones are meaningful for SEO:
+
+```ts title="app/products/page.tsx"
+import type { Metadata } from 'next'
+import { createLoader, createSerializer, parseAsString, parseAsInteger } from 'nuqs/server'
+
+const searchParamsConfig = {
+  category: parseAsString,      // Meaningful for SEO
+  sort: parseAsString,          // UI preference
+  page: parseAsInteger,         // Pagination
+  view: parseAsString           // UI preference
+}
+
+const serializeSearchParams = createSerializer(searchParamsConfig)
+
+export async function generateMetadata({ searchParams }) {
+  const { category } = await createLoader(searchParamsConfig)(searchParams)
+  
+  return {
+    alternates: {
+      // Only include category in canonical URL
+      canonical: category 
+        ? serializeSearchParams('/products', { category })
+        : '/products'
+    }
+  }
+}
+```
+
+## robots.txt considerations
+
+For query parameters that are purely for UI state, you can also use `robots.txt`
+to tell search engines to ignore specific parameters:
+
+```txt title="public/robots.txt"
+User-agent: *
+Allow: /
+
+# Ignore specific query parameters
+Disallow: /*?*sort=
+Disallow: /*?*page=
+Disallow: /*?*view=
+```
+
+<Warning>
+Be careful with `robots.txt` rules. They affect all pages on your site and
+can accidentally block important content if not configured correctly.
+</Warning>
+
+## Open Graph and Twitter Cards
+
+When sharing links on social media, you may want to remove query parameters
+from the Open Graph URL:
+
+```ts title="app/products/page.tsx"
+import type { Metadata } from 'next'
+
+export const metadata: Metadata = {
+  alternates: {
+    canonical: '/products'
+  },
+  openGraph: {
+    url: 'https://example.com/products' // Clean URL without query params
+  },
+  twitter: {
+    card: 'summary_large_image',
+  }
+}
+```
+
+Or include them if they're meaningful:
+
+```ts
+export async function generateMetadata({ searchParams }) {
+  const { category } = await loadSearchParams(searchParams)
+  const url = category
+    ? `https://example.com/products?category=${category}`
+    : 'https://example.com/products'
+
+  return {
+    alternates: { canonical: url },
+    openGraph: { url }
+  }
+}
+```
+
+## Google Search Console
+
+Monitor how Google indexes your pages with different query parameters:
+
+1. Check the **URL Parameters** section in Google Search Console
+2. Configure how Googlebot should treat specific parameters
+3. Use the **URL Inspection** tool to verify canonical tags are working
+
+## Best practices summary
+
+1. **Always set a canonical URL** when using query strings for UI state
+2. **Include meaningful query params** in canonical URLs for content identification
+3. **Use loaders and serializers** to keep canonical URL logic DRY
+4. **Test your canonical tags** using browser DevTools or SEO analysis tools
+5. **Monitor in Search Console** to ensure proper indexing
+6. **Be consistent** - use the same canonical URL strategy across your site

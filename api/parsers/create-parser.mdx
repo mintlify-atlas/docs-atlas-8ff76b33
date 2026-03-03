@@ -1,0 +1,489 @@
+---
+title: "createParser"
+description: "API reference for building custom parsers with the builder pattern"
+---
+
+## createParser
+
+Wrap a set of parse/serialize functions into a builder pattern parser for use with nuqs hooks.
+
+```typescript
+export function createParser<T>(
+  parser: Require<SingleParser<T>, 'parse' | 'serialize'>
+): SingleParserBuilder<T>
+```
+
+**From:** `packages/nuqs/src/parsers.ts:150-193`
+
+## Parameters
+
+<ParamField path="parser" type="object" required>
+  Parser configuration object.
+  
+  <Expandable title="properties">
+    <ParamField path="parse" type="(value: string) => T | null" required>
+      Function to convert a URL query string value into a typed state value.
+      
+      **Must return `null` for invalid inputs** to ensure graceful degradation.
+    </ParamField>
+    
+    <ParamField path="serialize" type="(value: T) => string" required>
+      Function to convert a typed state value back into a URL query string.
+      
+      **Must be lossless** - serializing and then parsing should return the original value.
+    </ParamField>
+    
+    <ParamField path="eq" type="(a: T, b: T) => boolean" optional>
+      Custom equality function for comparing state values.
+      
+      Defaults to referential equality (`a === b`). Provide this when parsing objects or arrays.
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+## Returns
+
+<ResponseField name="SingleParserBuilder<T>" type="object">
+  A parser builder with the following methods and properties:
+  
+  <Expandable title="properties">
+    <ResponseField name="parse" type="(value: string) => T | null">
+      The parse function from the input.
+    </ResponseField>
+    
+    <ResponseField name="serialize" type="(value: T) => string">
+      The serialize function from the input.
+    </ResponseField>
+    
+    <ResponseField name="eq" type="(a: T, b: T) => boolean">
+      Equality function (defaults to `(a, b) => a === b`).
+    </ResponseField>
+    
+    <ResponseField name="type" type="'single'">
+      Parser type identifier.
+    </ResponseField>
+    
+    <ResponseField name="withDefault" type="(defaultValue: NonNullable<T>) => SingleParserBuilder<T>">
+      Returns a new parser with a default value, making the hook state non-nullable.
+      
+      Setting state to the default value clears the query parameter from the URL (unless `clearOnDefault: false`).
+    </ResponseField>
+    
+    <ResponseField name="withOptions" type="(options: Options) => this">
+      Returns the parser with navigation options (history, scroll, shallow, etc.) pre-configured.
+    </ResponseField>
+    
+    <ResponseField name="parseServerSide" type="(value: string | string[] | undefined) => T | null">
+      Server-side parsing helper (deprecated in favor of loaders).
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+## Usage
+
+### Basic Custom Parser
+
+```typescript
+import { createParser } from 'nuqs'
+
+const parseAsHexColor = createParser({
+  parse(query: string) {
+    // Validate hex color format
+    if (!/^[0-9A-Fa-f]{6}$/.test(query)) {
+      return null // Invalid format
+    }
+    return `#${query}`
+  },
+  serialize(value: string) {
+    // Remove # prefix for URL
+    return value.replace('#', '')
+  }
+})
+
+const [color, setColor] = useQueryState(
+  'color',
+  parseAsHexColor.withDefault('#ff0000')
+)
+// URL: ?color=ff0000
+// State: '#ff0000'
+
+setColor('#00ff00')
+// URL: ?color=00ff00
+```
+
+### Parser with Custom Equality
+
+```typescript
+import { createParser } from 'nuqs'
+
+type Point = { x: number; y: number }
+
+const parseAsPoint = createParser({
+  parse(query: string) {
+    const match = query.match(/^(\d+),(\d+)$/)
+    if (!match) return null
+    return {
+      x: parseInt(match[1]),
+      y: parseInt(match[2])
+    }
+  },
+  serialize(value: Point) {
+    return `${value.x},${value.y}`
+  },
+  eq(a: Point, b: Point) {
+    // Deep equality for objects
+    return a.x === b.x && a.y === b.y
+  }
+})
+
+const [cursor, setCursor] = useQueryState(
+  'cursor',
+  parseAsPoint.withDefault({ x: 0, y: 0 })
+)
+// URL: ?cursor=100,200
+// State: { x: 100, y: 200 }
+```
+
+### Composing Existing Parsers
+
+```typescript
+import { createParser, parseAsHex } from 'nuqs'
+
+type RGB = { r: number; g: number; b: number }
+
+const parseAsRgb = createParser({
+  parse(query: string) {
+    if (query.length !== 6) {
+      return null
+    }
+    return {
+      r: parseAsHex.parse(query.slice(0, 2)) ?? 0x00,
+      g: parseAsHex.parse(query.slice(2, 4)) ?? 0x00,
+      b: parseAsHex.parse(query.slice(4)) ?? 0x00
+    }
+  },
+  serialize({ r, g, b }: RGB) {
+    return (
+      parseAsHex.serialize(r) +
+      parseAsHex.serialize(g) +
+      parseAsHex.serialize(b)
+    )
+  },
+  eq(a, b) {
+    return a.r === b.r && a.g === b.g && a.b === b.b
+  }
+})
+
+const [color, setColor] = useQueryState(
+  'color',
+  parseAsRgb.withDefault({ r: 255, g: 0, b: 0 })
+)
+// URL: ?color=ff0000
+// State: { r: 255, g: 0, b: 0 }
+```
+
+### Parser with Validation
+
+```typescript
+import { createParser } from 'nuqs'
+
+const parseAsEmail = createParser({
+  parse(query: string) {
+    // Basic email validation
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
+    if (!emailRegex.test(query)) {
+      return null
+    }
+    return query
+  },
+  serialize: String
+})
+
+const [email, setEmail] = useQueryState('email', parseAsEmail)
+// URL: ?email=user@example.com
+// State: 'user@example.com'
+
+// URL: ?email=invalid-email
+// State: null (validation failed)
+```
+
+## Builder Methods
+
+### withDefault
+
+Set a default value to make the hook state non-nullable.
+
+```typescript
+const parser = createParser({
+  parse: v => parseInt(v) || null,
+  serialize: String
+})
+
+const parserWithDefault = parser.withDefault(0)
+
+// Without default
+const [count1, setCount1] = useQueryState('count', parser)
+// Type: number | null
+
+// With default
+const [count2, setCount2] = useQueryState('count', parserWithDefault)
+// Type: number (never null)
+```
+
+**Behavior:**
+- When URL has no value: returns default instead of `null`
+- When setting to default: clears query parameter from URL (unless `clearOnDefault: false`)
+- When setting to `null`: clears query parameter and returns default value
+
+**From:** `packages/nuqs/src/parsers.ts:79-103`
+
+---
+
+### withOptions
+
+Pre-configure navigation options at the parser level.
+
+```typescript
+const parser = createParser({
+  parse: v => v,
+  serialize: String
+})
+
+const parserWithOptions = parser
+  .withOptions({
+    history: 'push',  // Create new history entry
+    scroll: true,     // Scroll to top on update
+    shallow: false    // Trigger server request
+  })
+
+const [search, setSearch] = useQueryState('q', parserWithOptions)
+// Every update uses these options
+
+// Options can still be overridden per update
+setSearch('query', { history: 'replace' })
+```
+
+**Available Options:**
+- `history`: `'push'` | `'replace'` - How updates affect browser history
+- `scroll`: `boolean` - Scroll to top after update
+- `shallow`: `boolean` - Client-only updates (default: `true`)
+- `throttleMs`: `number` - Throttle URL updates (deprecated, use `limitUrlUpdates`)
+- `limitUrlUpdates`: Rate limit configuration
+- `startTransition`: React transition function
+- `clearOnDefault`: `boolean` - Clear URL when setting to default (default: `true`)
+
+**From:** `packages/nuqs/src/parsers.ts:61-62` and `packages/nuqs/src/parsers.ts:186-192`
+
+---
+
+### Chaining Methods
+
+Builder methods can be chained in any order:
+
+```typescript
+const parser = parseAsInteger
+  .withDefault(1)
+  .withOptions({ history: 'push' })
+  .withOptions({ scroll: true })
+  .withDefault(10) // Overrides previous default
+
+const [page, setPage] = useQueryState('page', parser)
+// Type: number (default: 10)
+// Options: { history: 'push', scroll: true }
+```
+
+## Implementation Details
+
+### Full Implementation
+
+```typescript
+export function createParser<T>(
+  parser: Require<SingleParser<T>, 'parse' | 'serialize'>
+): SingleParserBuilder<T> {
+  function parseServerSideNullable(value: string | string[] | undefined) {
+    if (typeof value === 'undefined') {
+      return null
+    }
+    let str = ''
+    if (Array.isArray(value)) {
+      // Follow the spec:
+      // https://url.spec.whatwg.org/#dom-urlsearchparams-get
+      if (value[0] === undefined) {
+        return null
+      }
+      str = value[0]
+    }
+    if (typeof value === 'string') {
+      str = value
+    }
+    return safeParse(parser.parse, str)
+  }
+
+  return {
+    type: 'single',
+    eq: (a, b) => a === b,
+    ...parser,
+    parseServerSide: parseServerSideNullable,
+    withDefault(defaultValue) {
+      return {
+        ...this,
+        defaultValue,
+        parseServerSide(value) {
+          return parseServerSideNullable(value) ?? defaultValue
+        }
+      }
+    },
+    withOptions(options: Options) {
+      return {
+        ...this,
+        ...options
+      }
+    }
+  }
+}
+```
+
+**From:** `packages/nuqs/src/parsers.ts:150-193`
+
+### safeParse Helper
+
+The `safeParse` helper wraps the parse function to handle errors gracefully:
+
+```typescript
+// From packages/nuqs/src/lib/safe-parse.ts
+function safeParse<T>(
+  parse: (value: string) => T | null,
+  value: string,
+  path?: string
+): T | null {
+  try {
+    return parse(value)
+  } catch (error) {
+    console.error(`[nuqs] Parse error${path ? ` at ${path}` : ''}:`, error)
+    return null
+  }
+}
+```
+
+## Best Practices
+
+### 1. Always Return Null for Invalid Input
+
+```typescript
+// ✅ Good
+const parseAsPositiveInt = createParser({
+  parse(v) {
+    const num = parseInt(v)
+    if (num > 0) return num
+    return null // Invalid: negative or NaN
+  },
+  serialize: String
+})
+
+// ❌ Bad - throws errors
+const parseAsPositiveInt = createParser({
+  parse(v) {
+    const num = parseInt(v)
+    if (num <= 0) throw new Error('Must be positive')
+    return num
+  },
+  serialize: String
+})
+```
+
+### 2. Ensure Lossless Serialization
+
+```typescript
+// ✅ Good - preserves precision
+const parseAsFloat = createParser({
+  parse(v) {
+    const num = parseFloat(v)
+    return num == num ? num : null
+  },
+  serialize: String // No data loss
+})
+
+// ❌ Bad - loses precision
+const parseAsFloat = createParser({
+  parse: parseFloat,
+  serialize: v => v.toFixed(2) // Rounds to 2 decimals!
+})
+```
+
+### 3. Provide Custom Equality for Objects
+
+```typescript
+// ✅ Good - custom equality
+const parseAsRange = createParser({
+  parse(v) {
+    const [min, max] = v.split('-').map(Number)
+    return { min, max }
+  },
+  serialize: ({ min, max }) => `${min}-${max}`,
+  eq: (a, b) => a.min === b.min && a.max === b.max
+})
+
+// ❌ Bad - referential equality won't work
+const parseAsRange = createParser({
+  parse(v) {
+    const [min, max] = v.split('-').map(Number)
+    return { min, max }
+  },
+  serialize: ({ min, max }) => `${min}-${max}`
+  // Missing eq - clearOnDefault won't work correctly
+})
+```
+
+### 4. Use Type Guards for Complex Types
+
+```typescript
+type Status = 'pending' | 'active' | 'completed'
+
+const isStatus = (value: unknown): value is Status => {
+  return ['pending', 'active', 'completed'].includes(value as string)
+}
+
+const parseAsStatus = createParser({
+  parse(query): Status | null {
+    return isStatus(query) ? query : null
+  },
+  serialize: String
+})
+```
+
+## Related APIs
+
+### createMultiParser
+
+For creating multi-value parsers (e.g., `?tag=a&tag=b`):
+
+```typescript
+export function createMultiParser<T>(
+  parser: Omit<Require<MultiParser<T>, 'parse' | 'serialize'>, 'type'>
+): MultiParserBuilder<T>
+```
+
+**From:** `packages/nuqs/src/parsers.ts:195-226`
+
+**Usage:**
+```typescript
+import { createMultiParser, parseAsInteger } from 'nuqs'
+
+const parseAsIntArray = createMultiParser({
+  parse: (values: readonly string[]) => {
+    const parsed = values.map(v => parseAsInteger.parse(v)).filter(v => v !== null)
+    return parsed.length > 0 ? parsed : null
+  },
+  serialize: (values: number[]) => values.map(String)
+})
+
+const [ids, setIds] = useQueryState('id', parseAsIntArray.withDefault([]))
+// URL: ?id=1&id=2&id=3
+// State: [1, 2, 3]
+```
+
+## Next Steps
+
+- [Built-in Parsers](/api/parsers/built-in) - Reference for all built-in parsers
+- [Parser System Overview](/api/parsers/overview) - Understand parser architecture
+- [Parser Concepts](/concepts/parsers) - Higher-level usage guide

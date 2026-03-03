@@ -1,0 +1,189 @@
+---
+title: Next.js App Router Adapter
+description: Setup and configure nuqs for Next.js App Router applications
+---
+
+The Next.js App Router adapter enables nuqs to work seamlessly with Next.js 14.2.0 and above using the App Router.
+
+## Installation
+
+<Steps>
+  <Step title="Install nuqs">
+    First, install nuqs in your Next.js project:
+
+    ```bash
+    npm install nuqs
+    ```
+
+    ```bash
+    pnpm add nuqs
+    ```
+
+    ```bash
+    yarn add nuqs
+    ```
+  </Step>
+
+  <Step title="Add the adapter to your root layout">
+    Wrap your application with the `NuqsAdapter` in your root layout file:
+
+    ```tsx title="app/layout.tsx"
+    import { NuqsAdapter } from 'nuqs/adapters/next/app'
+import type { ReactNode } from 'react'
+
+export default function RootLayout({ children }: { children: ReactNode }) {
+  return (
+    <html lang="en">
+      <body>
+        <NuqsAdapter>{children}</NuqsAdapter>
+      </body>
+    </html>
+  )
+}
+    ```
+
+    <Note>
+      The adapter must be placed inside the `<body>` tag and wrap all content that uses nuqs hooks.
+    </Note>
+  </Step>
+
+  <Step title="Use nuqs hooks in your client components">
+    Now you can use `useQueryState` and `useQueryStates` in any client component:
+
+    ```tsx title="app/search.tsx"
+    'use client'
+
+import { useQueryState } from 'nuqs'
+
+export default function SearchComponent() {
+  const [search, setSearch] = useQueryState('q')
+
+  return (
+    <div>
+      <input
+        value={search || ''}
+        onChange={(e) => setSearch(e.target.value)}
+        placeholder="Search..."
+      />
+      <p>Search query: {search || 'none'}</p>
+    </div>
+  )
+}
+    ```
+  </Step>
+</Steps>
+
+## Version Requirements
+
+- **Next.js**: `>=14.2.0`
+- **React**: `>=18.2.0` or `^19.0.0-0`
+
+<Warning>
+  For Next.js versions older than 14.2.0, use nuqs v1.x instead, which doesn't require the adapter setup.
+</Warning>
+
+## Features
+
+### Shallow Updates (Default)
+
+By default, URL updates are client-side only and don't trigger server re-renders:
+
+```tsx
+const [state, setState] = useQueryState('key')
+// Updates only happen on the client
+```
+
+### Server Re-renders
+
+Opt into server-side rendering updates by setting `shallow: false`:
+
+```tsx
+const [state, setState] = useQueryState('key', { shallow: false })
+// URL updates will trigger server component re-renders
+```
+
+### Transitions
+
+Combine with React's `useTransition` for loading states during server updates:
+
+```tsx
+'use client'
+
+import { useTransition } from 'react'
+import { useQueryState, parseAsString } from 'nuqs'
+
+export function SearchWithLoading() {
+  const [isLoading, startTransition] = useTransition()
+  const [query, setQuery] = useQueryState(
+    'q',
+    parseAsString.withOptions({
+      shallow: false,
+      startTransition
+    })
+  )
+
+  return (
+    <div>
+      <input
+        value={query || ''}
+        onChange={(e) => setQuery(e.target.value)}
+        disabled={isLoading}
+      />
+      {isLoading && <span>Loading...</span>}
+    </div>
+  )
+}
+```
+
+## How It Works
+
+The Next.js App Router adapter:
+
+1. Uses `useSearchParams()` from `next/navigation` to read the current URL state
+2. Uses `useOptimistic()` to provide instant UI updates
+3. Calls `router.replace()` for non-shallow updates to trigger server re-renders
+4. Patches the History API to detect navigation events and reset internal queues
+5. Batches multiple state updates efficiently
+
+## Server Components
+
+For accessing search params in Server Components, use `createSearchParamsCache`:
+
+```tsx title="app/page.tsx"
+import { createSearchParamsCache, parseAsString } from 'nuqs/server'
+
+export const searchParamsCache = createSearchParamsCache({
+  q: parseAsString.withDefault('')
+})
+
+export default async function Page({
+  searchParams
+}: {
+  searchParams: Promise<Record<string, string | string[] | undefined>>
+}) {
+  const { q } = await searchParamsCache.parse(searchParams)
+  return <div>Search: {q}</div>
+}
+```
+
+See the [Server-Side Parsing](/server/overview) documentation for more details.
+
+## Troubleshooting
+
+### Adapter must be inside `<body>`
+
+The adapter relies on browser APIs and must be rendered inside the `<body>` tag. Placing it in `<head>` or outside `<html>` will cause errors.
+
+### Not working with Next.js 14.1 or older
+
+The App Router adapter requires Next.js 14.2.0 or newer. For older versions:
+
+- Upgrade to Next.js 14.2.0+, or
+- Use nuqs v1.x which has built-in support for older Next.js versions
+
+### Search params not updating
+
+Make sure:
+1. The component using nuqs hooks has the `'use client'` directive
+2. The component is a child of the `NuqsAdapter`
+3. You're not accidentally using the wrong adapter (e.g., pages router adapter)

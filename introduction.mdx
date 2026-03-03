@@ -1,0 +1,118 @@
+---
+title: "Introduction"
+description: "Type-safe search params state manager for React frameworks - Like useState, but stored in the URL query string"
+---
+
+## What is nuqs?
+
+nuqs is a type-safe URL query string state manager for React that works seamlessly across multiple frameworks. It provides a simple, hook-based API that feels just like `useState`, but with your state synchronized to the URL.
+
+```tsx
+import { useQueryState } from 'nuqs'
+
+export default function SearchPage() {
+  const [name, setName] = useQueryState('name')
+  return (
+    <>
+      <h1>Hello, {name || 'anonymous visitor'}!</h1>
+      <input value={name || ''} onChange={e => setName(e.target.value)} />
+      <button onClick={() => setName(null)}>Clear</button>
+    </>
+  )
+}
+```
+
+The URL updates automatically as you type, and your state persists across page refreshes and browser navigation.
+
+## Why nuqs?
+
+<CardGroup cols={2}>
+  <Card title="Type-Safe" icon="shield-check">
+    Built-in parsers for common types (string, number, boolean, Date) with full TypeScript support. Create custom parsers for your own types.
+  </Card>
+  
+  <Card title="Framework Agnostic" icon="grid">
+    Works with Next.js (app & pages routers), React SPA, Remix, React Router, TanStack Router, and more via adapters.
+  </Card>
+  
+  <Card title="Minimal Bundle" icon="feather">
+    Zero dependencies. Client bundle under 6KB minified. Tree-shakeable to ~4.5KB for minimal usage.
+  </Card>
+  
+  <Card title="Server-Side Ready" icon="server">
+    Server cache for type-safe searchParams access in nested server components. Loaders for one-off parsing.
+  </Card>
+  
+  <Card title="Smart Batching" icon="layer-group">
+    Multiple state updates in the same tick are automatically batched. Throttling prevents browser rate-limiting.
+  </Card>
+  
+  <Card title="Flexible History" icon="clock-rotate-left">
+    Choose between replacing or appending to browser history. Use the Back button to navigate state updates.
+  </Card>
+</CardGroup>
+
+## Key Features
+
+### URL as Single Source of Truth
+
+The URL query string is the single source of truth for your state. No hidden state, no synchronization bugs. What you see in the URL is what you get in your component.
+
+### Built-in Parsers
+
+nuqs includes parsers for common data types:
+
+- **Strings**: `parseAsString`
+- **Numbers**: `parseAsInteger`, `parseAsFloat`
+- **Booleans**: `parseAsBoolean`
+- **Dates**: `parseAsTimestamp`, `parseAsIsoDateTime`
+- **Arrays**: `parseAsArrayOf(parser)`
+- **JSON**: `parseAsJson<Type>()`
+- **Enums**: `parseAsStringEnum`, `parseAsStringLiteral`, `parseAsNumberLiteral`
+
+```tsx
+import { useQueryState, parseAsInteger } from 'nuqs'
+
+const [count, setCount] = useQueryState('count', parseAsInteger.withDefault(0))
+```
+
+### Shallow Mode by Default
+
+URL updates are client-side only by default (shallow routing in Next.js). Opt-in to server updates when you need server components to re-render.
+
+### Transitions Support
+
+Combine with React's `useTransition` to get loading states while the server re-renders with updated URL parameters.
+
+## Get Started
+
+<CardGroup cols={2}>
+  <Card title="Installation" icon="download" href="/installation">
+    Install nuqs and set up your framework adapter
+  </Card>
+  
+  <Card title="Quick Start" icon="rocket" href="/quickstart">
+    Get a working example running in 5 minutes
+  </Card>
+  
+  <Card title="Core Concepts" icon="book" href="/concepts/adapters">
+    Learn about adapters, parsers, and options
+  </Card>
+  
+  <Card title="API Reference" icon="code" href="/api/use-query-state">
+    Explore the complete API documentation
+  </Card>
+</CardGroup>
+
+## Example Use Cases
+
+- **Search & Filtering**: Store search queries and filter selections in the URL
+- **Pagination**: Keep track of current page and page size
+- **Form State**: Persist form inputs across page refreshes
+- **View Settings**: Remember user preferences like sorting, view mode, or display options
+- **Shareable Links**: Generate URLs that contain application state for easy sharing
+- **Deep Linking**: Allow users to bookmark specific application states
+
+<Note>
+  nuqs is framework-agnostic at its core. While it has excellent Next.js integration, it works equally well with plain React, Remix, React Router, and other frameworks.
+</Note>

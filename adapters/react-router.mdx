@@ -1,0 +1,370 @@
+---
+title: React Router Adapter
+description: Setup and configure nuqs for React Router v6 and v7 applications
+---
+
+The React Router adapter enables nuqs to work with React Router applications. There are separate adapters for React Router v6 and v7.
+
+## Version Selection
+
+### React Router v6
+
+For applications using `react-router-dom@^6`:
+
+```tsx
+import { NuqsAdapter } from 'nuqs/adapters/react-router/v6'
+```
+
+### React Router v7
+
+For applications using `react-router@^7`:
+
+```tsx
+import { NuqsAdapter } from 'nuqs/adapters/react-router/v7'
+```
+
+<Warning>
+  The generic import `nuqs/adapters/react-router` is deprecated and will be removed in nuqs v3.0.0. Always specify the version explicitly.
+</Warning>
+
+## Installation
+
+<Steps>
+  <Step title="Install nuqs">
+    Install nuqs in your React Router project:
+
+    ```bash
+    npm install nuqs
+    ```
+
+    ```bash
+    pnpm add nuqs
+    ```
+
+    ```bash
+    yarn add nuqs
+    ```
+  </Step>
+
+  <Step title="Set up the adapter for your version">
+    Choose the setup instructions for your React Router version:
+
+    <Tabs>
+      <Tab title="React Router v6">
+        Wrap your `RouterProvider` with the `NuqsAdapter`:
+
+        ```tsx title="src/main.tsx"
+        import { NuqsAdapter } from 'nuqs/adapters/react-router/v6'
+import { createBrowserRouter, RouterProvider } from 'react-router-dom'
+import { createRoot } from 'react-dom/client'
+import App from './App'
+
+const router = createBrowserRouter([
+  {
+    path: '/',
+    element: <App />,
+    children: [
+      // Your routes here
+    ]
+  }
+])
+
+createRoot(document.getElementById('root')!).render(
+  <NuqsAdapter>
+    <RouterProvider router={router} />
+  </NuqsAdapter>
+)
+        ```
+      </Tab>
+
+      <Tab title="React Router v7">
+        Wrap your app with the `NuqsAdapter` in your root component:
+
+        ```tsx title="app/root.tsx"
+        import { NuqsAdapter } from 'nuqs/adapters/react-router/v7'
+import { Outlet } from 'react-router'
+
+export default function Root() {
+  return (
+    <NuqsAdapter>
+      <div>
+        <nav>{/* Navigation */}</nav>
+        <Outlet />
+      </div>
+    </NuqsAdapter>
+  )
+}
+        ```
+      </Tab>
+    </Tabs>
+  </Step>
+
+  <Step title="Use nuqs hooks in your routes">
+    Now you can use `useQueryState` and `useQueryStates` in any route component:
+
+    ```tsx title="src/routes/search.tsx"
+    import { useQueryState } from 'nuqs'
+
+export default function SearchRoute() {
+  const [search, setSearch] = useQueryState('q')
+
+  return (
+    <div>
+      <input
+        value={search || ''}
+        onChange={(e) => setSearch(e.target.value)}
+        placeholder="Search..."
+      />
+      <p>Search query: {search || 'none'}</p>
+    </div>
+  )
+}
+    ```
+  </Step>
+</Steps>
+
+## Version Requirements
+
+### React Router v6
+
+- **react-router-dom**: `^6`
+- **React**: `>=18.2.0` or `^19.0.0-0`
+
+### React Router v7
+
+- **react-router**: `^7`
+- **React**: `>=18.2.0` or `^19.0.0-0`
+
+## Features
+
+### Integration with React Router Navigation
+
+Both adapters use React Router's native `useNavigate()` and `useSearchParams()` hooks, ensuring perfect integration with React Router's navigation system.
+
+### Optimistic UI Updates
+
+Use `useOptimisticSearchParams` for optimistic UI updates during navigation:
+
+```tsx
+import { useOptimisticSearchParams } from 'nuqs/adapters/react-router/v6'
+// or
+import { useOptimisticSearchParams } from 'nuqs/adapters/react-router/v7'
+
+export function SearchResults() {
+  const searchParams = useOptimisticSearchParams()
+  const query = searchParams.get('q')
+  
+  return <div>Query: {query}</div>
+}
+```
+
+This returns the search params that will be applied after pending transitions complete.
+
+### Shallow Updates
+
+By default, URL updates are shallow (client-side only):
+
+```tsx
+const [state, setState] = useQueryState('key')
+// Client-side only update
+```
+
+To trigger full page navigation, use `shallow: false`:
+
+```tsx
+const [state, setState] = useQueryState('key', { shallow: false })
+```
+
+## Dynamic Routes
+
+The adapter works seamlessly with dynamic route segments:
+
+```tsx title="src/routes/post.$id.tsx"
+import { useParams } from 'react-router-dom'
+import { useQueryState, parseAsInteger } from 'nuqs'
+
+export default function PostRoute() {
+  const { id } = useParams()
+  const [page, setPage] = useQueryState('page', parseAsInteger.withDefault(1))
+
+  return (
+    <div>
+      <h1>Post {id}</h1>
+      <p>Page {page}</p>
+      <button onClick={() => setPage(page + 1)}>Next Page</button>
+    </div>
+  )
+}
+```
+
+## How It Works
+
+Both React Router adapters:
+
+1. Use React Router's `useSearchParams()` to read current search params
+2. Use React Router's `useNavigate()` to update the URL
+3. Automatically handle route transitions and history changes
+4. Provide optimistic updates through `useOptimisticSearchParams()`
+5. Filter and sync only the relevant search params for each component
+
+## Examples
+
+### Tabbed Interface
+
+```tsx
+import { useQueryState, parseAsStringLiteral } from 'nuqs'
+
+const tabs = ['overview', 'settings', 'advanced'] as const
+
+export function TabbedInterface() {
+  const [activeTab, setActiveTab] = useQueryState(
+    'tab',
+    parseAsStringLiteral(tabs).withDefault('overview')
+  )
+
+  return (
+    <div>
+      <div>
+        {tabs.map((tab) => (
+          <button
+            key={tab}
+            onClick={() => setActiveTab(tab)}
+            className={activeTab === tab ? 'active' : ''}
+          >
+            {tab}
+          </button>
+        ))}
+      </div>
+      <div>
+        {activeTab === 'overview' && <OverviewTab />}
+        {activeTab === 'settings' && <SettingsTab />}
+        {activeTab === 'advanced' && <AdvancedTab />}
+      </div>
+    </div>
+  )
+}
+```
+
+### Product Filters with Multiple States
+
+```tsx
+import { useQueryStates, parseAsString, parseAsInteger, parseAsBoolean } from 'nuqs'
+
+export function ProductFilters() {
+  const [filters, setFilters] = useQueryStates({
+    search: parseAsString,
+    category: parseAsString,
+    minPrice: parseAsInteger,
+    maxPrice: parseAsInteger,
+    inStock: parseAsBoolean
+  })
+
+  return (
+    <div>
+      <input
+        value={filters.search || ''}
+        onChange={(e) => setFilters({ search: e.target.value || null })}
+        placeholder="Search products..."
+      />
+      
+      <select
+        value={filters.category || ''}
+        onChange={(e) => setFilters({ category: e.target.value || null })}
+      >
+        <option value="">All Categories</option>
+        <option value="electronics">Electronics</option>
+        <option value="clothing">Clothing</option>
+      </select>
+      
+      <label>
+        <input
+          type="checkbox"
+          checked={filters.inStock || false}
+          onChange={(e) => setFilters({ inStock: e.target.checked || null })}
+        />
+        In Stock Only
+      </label>
+      
+      <button onClick={() => setFilters({
+        search: null,
+        category: null,
+        minPrice: null,
+        maxPrice: null,
+        inStock: null
+      })}>
+        Clear Filters
+      </button>
+    </div>
+  )
+}
+```
+
+### Pagination with History
+
+```tsx
+import { useQueryState, parseAsInteger } from 'nuqs'
+
+export function PaginatedList() {
+  const [page, setPage] = useQueryState(
+    'page',
+    parseAsInteger.withDefault(1).withOptions({
+      history: 'push' // Create history entries for pagination
+    })
+  )
+
+  return (
+    <div>
+      <div>{/* Render items for current page */}</div>
+      <div>
+        <button
+          onClick={() => setPage(page - 1)}
+          disabled={page <= 1}
+        >
+          Previous
+        </button>
+        <span>Page {page}</span>
+        <button onClick={() => setPage(page + 1)}>
+          Next
+        </button>
+      </div>
+    </div>
+  )
+}
+```
+
+## Troubleshooting
+
+### Wrong adapter version
+
+Make sure you're using the correct adapter for your React Router version:
+
+```tsx
+// React Router v6 ✅
+import { NuqsAdapter } from 'nuqs/adapters/react-router/v6'
+import { /* ... */ } from 'react-router-dom'
+
+// React Router v7 ✅
+import { NuqsAdapter } from 'nuqs/adapters/react-router/v7'
+import { /* ... */ } from 'react-router'
+```
+
+### Search params not updating
+
+Ensure:
+1. The `NuqsAdapter` wraps your router or app
+2. Components using nuqs hooks are inside the router context
+3. You're not preventing default on navigation events
+
+### Deprecation warning
+
+If you see a deprecation warning about `nuqs/adapters/react-router`, update your import to specify the version:
+
+```tsx
+// ❌ Deprecated (will be removed in v3.0.0)
+import { NuqsAdapter } from 'nuqs/adapters/react-router'
+
+// ✅ Correct
+import { NuqsAdapter } from 'nuqs/adapters/react-router/v6'
+// or
+import { NuqsAdapter } from 'nuqs/adapters/react-router/v7'
+```

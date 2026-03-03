@@ -1,0 +1,359 @@
+---
+title: 'useQueryState'
+description: 'React hook to synchronize a single URL query parameter with component state'
+---
+
+## Overview
+
+`useQueryState` is a React hook that synchronizes a single URL query parameter with component state. It works like `useState`, but the state is stored in the URL query string and persists across page reloads and browser navigation.
+
+## Function Signature
+
+```typescript
+function useQueryState<T = string>(
+  key: string,
+  options?: UseQueryStateOptions<T>
+): UseQueryStateReturn<T, DefaultValue>
+```
+
+### Type Definitions
+
+```typescript
+type UseQueryStateOptions<T> = GenericParser<T> & Options
+
+type UseQueryStateReturn<Parsed, Default> = [
+  Default extends undefined ? Parsed | null : Parsed,
+  (
+    value: Parsed | null | ((old: Parsed | null) => Parsed | null),
+    options?: Options
+  ) => Promise<URLSearchParams>
+]
+```
+
+## Parameters
+
+<ParamField path="key" type="string" required>
+  The URL query string key to bind to. This will be the parameter name in the URL.
+  
+  Example: `'tag'` will manage the `tag` parameter in `?tag=value`
+</ParamField>
+
+<ParamField path="options" type="UseQueryStateOptions<T>">
+  Configuration object combining parser options and behavior options.
+
+  ### Parser Options
+
+  <ParamField path="parse" type="(value: string) => T | null">
+    Function to convert a query string value into a state value. Return `null` for invalid inputs.
+  </ParamField>
+
+  <ParamField path="serialize" type="(value: T) => string">
+    Function to render the state value into a query string value. Defaults to `String()`.
+  </ParamField>
+
+  <ParamField path="defaultValue" type="T">
+    Default value to return when the query parameter is not present in the URL. Makes the returned state non-nullable.
+  </ParamField>
+
+  <ParamField path="eq" type="(a: T, b: T) => boolean">
+    Equality comparison function. Used with `clearOnDefault` to determine if a value equals the default.
+  </ParamField>
+
+  ### Behavior Options
+
+  <ParamField path="history" type="'push' | 'replace'" default="'replace'">
+    How the query update affects page history:
+    - `'replace'`: Keep the current history point and only replace the query string (default)
+    - `'push'`: Create a new history entry, allowing use of back/forward buttons
+  </ParamField>
+
+  <ParamField path="scroll" type="boolean" default={false}>
+    Whether to scroll to top after a query state update.
+  </ParamField>
+
+  <ParamField path="shallow" type="boolean" default={true}>
+    Client-side only updates when `true` (default). Set to `false` to trigger server re-renders (Next.js only).
+  </ParamField>
+
+  <ParamField path="throttleMs" type="number" default={50}>
+    Maximum time (ms) to wait between URL updates. Minimum value is 50ms. Safari may require ~120ms.
+    
+    <Warning>Deprecated: Use `limitUrlUpdates` instead.</Warning>
+  </ParamField>
+
+  <ParamField path="limitUrlUpdates" type="LimitUrlUpdates">
+    Rate limiting configuration for URL updates:
+    ```typescript
+    type LimitUrlUpdates = 
+      | { method: 'throttle'; timeMs: number }
+      | { method: 'debounce'; timeMs: number }
+    ```
+  </ParamField>
+
+  <ParamField path="startTransition" type="TransitionStartFunction">
+    Pass `startTransition` from `React.useTransition()` to observe loading states during server updates.
+  </ParamField>
+
+  <ParamField path="clearOnDefault" type="boolean" default={true}>
+    Clear the query parameter from the URL when setting state to the default value.
+  </ParamField>
+</ParamField>
+
+## Return Value
+
+Returns a tuple `[state, setState]` similar to `React.useState`:
+
+<ParamField path="state" type="T | null">
+  The current state value:
+  - `null` if the query parameter is not in the URL (when no default value is provided)
+  - The parsed value from the URL
+  - The default value if provided and query parameter is missing
+</ParamField>
+
+<ParamField path="setState" type="function">
+  State updater function with the signature:
+  
+  ```typescript
+  (
+    value: T | null | ((old: T | null) => T | null),
+    options?: Options
+  ) => Promise<URLSearchParams>
+  ```
+
+  **Parameters:**
+  - `value`: New state value, `null` to clear, or updater function
+  - `options`: Optional options to override hook-level settings
+
+  **Returns:** Promise that resolves with the updated URLSearchParams after the URL is updated
+</ParamField>
+
+## Usage Examples
+
+### Basic String State
+
+```tsx
+'use client'
+
+import { useQueryState } from 'nuqs'
+
+export default function SearchFilter() {
+  const [tag, setTag] = useQueryState('tag')
+  
+  return (
+    <>
+      <h1>Filter by tag: {tag || 'all'}</h1>
+      <input 
+        value={tag || ''} 
+        onChange={e => setTag(e.target.value || null)} 
+      />
+      <button onClick={() => setTag(null)}>Clear</button>
+    </>
+  )
+}
+```
+
+### With Type Parser
+
+```tsx
+import { useQueryState, parseAsInteger } from 'nuqs'
+
+export default function Counter() {
+  const [count, setCount] = useQueryState('count', parseAsInteger)
+  
+  return (
+    <>
+      <pre>count: {count ?? 'null'}</pre>
+      <button onClick={() => setCount(c => (c ?? 0) + 1)}>+</button>
+      <button onClick={() => setCount(c => (c ?? 0) - 1)}>-</button>
+      <button onClick={() => setCount(null)}>Clear</button>
+    </>
+  )
+}
+```
+
+### With Default Value
+
+```tsx
+import { useQueryState, parseAsInteger } from 'nuqs'
+
+export default function Counter() {
+  const [count, setCount] = useQueryState(
+    'count',
+    parseAsInteger.withDefault(0)
+  )
+  
+  // count is never null when default value is provided
+  const increment = () => setCount(c => c + 1)
+  const decrement = () => setCount(c => c - 1)
+  const reset = () => setCount(null) // Clears from URL, returns 0
+  
+  return (
+    <>
+      <pre>count: {count}</pre>
+      <button onClick={increment}>+</button>
+      <button onClick={decrement}>-</button>
+      <button onClick={reset}>Reset</button>
+    </>
+  )
+}
+```
+
+### With History Push
+
+```tsx
+import { useQueryState } from 'nuqs'
+
+export default function SearchHistory() {
+  const [query, setQuery] = useQueryState('q', { 
+    history: 'push' 
+  })
+  
+  // Each update creates a new history entry
+  // Use browser back button to navigate search history
+  return (
+    <input
+      value={query || ''}
+      onChange={e => setQuery(e.target.value || null)}
+      placeholder="Search..."
+    />
+  )
+}
+```
+
+### With Custom Parser
+
+```tsx
+import { useQueryState } from 'nuqs'
+
+type RGB = { r: number; g: number; b: number }
+
+export default function ColorPicker() {
+  const [color, setColor] = useQueryState<RGB>('color', {
+    parse: (query: string) => {
+      const [r, g, b] = query.split(',').map(Number)
+      if (!r || !g || !b) return null
+      return { r, g, b }
+    },
+    serialize: ({ r, g, b }) => `${r},${g},${b}`,
+    defaultValue: { r: 255, g: 255, b: 255 }
+  })
+  
+  return (
+    <div style={{ backgroundColor: `rgb(${color.r},${color.g},${color.b})` }}>
+      <input 
+        type="range" 
+        value={color.r} 
+        onChange={e => setColor(c => ({ ...c, r: Number(e.target.value) }))}
+      />
+    </div>
+  )
+}
+```
+
+### With Transitions (Server Updates)
+
+```tsx
+'use client'
+
+import React from 'react'
+import { useQueryState, parseAsString } from 'nuqs'
+
+export default function ServerSearch({ data }) {
+  const [isLoading, startTransition] = React.useTransition()
+  const [query, setQuery] = useQueryState(
+    'query',
+    parseAsString.withOptions({
+      startTransition,
+      shallow: false // Notify the server
+    })
+  )
+  
+  if (isLoading) return <div>Loading...</div>
+  
+  return (
+    <input
+      value={query || ''}
+      onChange={e => setQuery(e.target.value || null)}
+    />
+  )
+}
+```
+
+### Awaiting URL Updates
+
+```tsx
+import { useQueryState, parseAsFloat } from 'nuqs'
+
+export default function Coordinates() {
+  const [lat, setLat] = useQueryState('lat', parseAsFloat)
+  const [lng, setLng] = useQueryState('lng', parseAsFloat)
+  
+  const setRandomLocation = async () => {
+    setLat(Math.random() * 180 - 90)
+    const search = await setLng(Math.random() * 360 - 180)
+    
+    // Both updates are batched and applied together
+    console.log('Updated URL:', search.toString())
+    console.log('Lat:', search.get('lat'))
+    console.log('Lng:', search.get('lng'))
+  }
+  
+  return <button onClick={setRandomLocation}>Random Location</button>
+}
+```
+
+## Behavior Notes
+
+<Note>
+  **Default values are internal**: When you specify a `defaultValue`, it will be returned when the query parameter is missing, but it won't be written to the URL.
+</Note>
+
+<Note>
+  **Clearing state**: Setting the state to `null` removes the key from the query string. If a default value is provided, the state will return to that default.
+</Note>
+
+<Warning>
+  **Invalid parse results**: If your `parse` function returns `null` for an invalid value in the URL, the state will be `null` (or the default value if provided).
+</Warning>
+
+<Note>
+  **State updates are batched**: Multiple `setState` calls in the same event loop tick are merged and applied to the URL together.
+</Note>
+
+<Note>
+  **URL updates are throttled**: To prevent browser rate-limiting of the History API, URL updates are throttled (default: 50ms). The returned state updates immediately for responsive UI.
+</Note>
+
+## Common Patterns
+
+### Override Options Per Update
+
+```tsx
+const [state, setState] = useQueryState('key', { history: 'push' })
+
+// Override on individual calls
+setState(null, { history: 'replace' }) // Replaces instead of pushing
+```
+
+### Builder Pattern Configuration
+
+```tsx
+import { parseAsInteger } from 'nuqs'
+
+const [count, setCount] = useQueryState(
+  'count',
+  parseAsInteger
+    .withDefault(0)
+    .withOptions({
+      history: 'push',
+      shallow: false,
+      throttleMs: 100
+    })
+)
+```
+
+## See Also
+
+- [useQueryStates](/api/use-query-states) - Manage multiple related query parameters together
+- [Built-in Parsers](/api/parsers/built-in) - Ready-to-use parsers for common types
+- [createParser](/api/parsers/create-parser) - Create custom parsers with type safety

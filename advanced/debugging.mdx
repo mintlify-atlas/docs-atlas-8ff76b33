@@ -1,0 +1,182 @@
+---
+title: Debugging
+description: Enable debug logs and troubleshoot issues with nuqs
+---
+
+Debugging tools are available to help you understand what's happening with your URL state management.
+
+## Browser debugging
+
+You can enable debug logs in the browser by setting the `debug` item in localStorage
+to `nuqs`, and reload the page.
+
+```js
+// In your browser devtools console:
+localStorage.setItem('debug', 'nuqs')
+```
+
+Log lines for both `useQueryState` and `useQueryStates` will be prefixed with
+`[nuq+]`, along with other internal debug logs.
+
+<Note>
+Unlike the `debug` package, this will not work with wildcards, but
+you can combine it: `localStorage.setItem('debug', '*,nuqs')`
+</Note>
+
+After enabling debug mode, reload your page and interact with your components.
+You'll see detailed logs about:
+
+- State updates and their values
+- URL synchronization events
+- Parser operations
+- Queue processing
+- History API calls
+
+### Performance markers
+
+User timings markers are also recorded when debug mode is enabled, for advanced performance analysis using your browser's devtools.
+
+To view these markers:
+
+1. Open your browser's DevTools
+2. Go to the Performance tab
+3. Record a session while interacting with your app
+4. Look for `nuqs` markers in the timeline
+
+## Server-side debugging (Node.js)
+
+Debug logs apply in any Node environment: server-side rendering (SSR), React
+Server Components (RSC), or when using `nuqs/server`. Hooks like
+`useQueryState` and `useQueryStates` can run on the server in these contexts.
+
+Enable logs by setting the `DEBUG` environment variable so it contains `nuqs`:
+
+```bash
+DEBUG=nuqs node server.js
+```
+
+Or when running your development server:
+
+```bash
+DEBUG=nuqs pnpm dev
+```
+
+You can also define `DEBUG=nuqs` in your `.env` file or configure it through
+your hosting environment.
+
+<Warning>
+Unlike the browser version, server-side debugging does not use `localStorage`.
+Debug mode is enabled when `process.env.DEBUG` contains the string `nuqs`.
+</Warning>
+
+## Debug log format
+
+Debug logs use a printf-style format with the following specifiers:
+
+- `%s` - String
+- `%d` - Number (integer or float)
+- `%f` - Float
+- `%O` - Object (serialized as JSON)
+
+The debug implementation in nuqs uses the `sprintf` function from `/home/daytona/workspace/source/packages/nuqs/src/lib/debug.ts:24`:
+
+```ts
+export function sprintf(base: string, ...args: any[]): string {
+  return base.replace(/%[sfdO]/g, match => {
+    const arg = args.shift()
+    return match === '%O' && arg
+      ? JSON.stringify(arg).replace(/"([^"]+)":/g, '$1:')
+      : String(arg)
+  })
+}
+```
+
+## Common debugging scenarios
+
+### State not updating
+
+If your state isn't updating as expected:
+
+1. Enable debug mode
+2. Check the console for `[nuq+]` logs
+3. Look for:
+   - Parse errors (invalid values)
+   - Queue processing logs
+   - URL update logs
+
+### URL not synchronizing
+
+If the URL isn't reflecting your state changes:
+
+1. Check if you've wrapped your app with the correct adapter
+2. Enable debug mode and look for adapter-related logs
+3. Verify throttling settings aren't delaying updates too much
+
+### Multiple adapter contexts
+
+If you see warnings about multiple adapter contexts:
+
+1. This may indicate duplicate `nuqs` versions in your dependencies
+2. Check if there are multiple copies of the nuqs package in node_modules
+3. Use `npm ls nuqs` or `pnpm why nuqs` to identify duplicates
+
+## Sharing debug logs
+
+When opening an [issue](https://github.com/47ng/nuqs/issues) on GitHub,
+please include debug logs to help diagnose the problem:
+
+1. Enable debug mode as described above
+2. Reproduce the issue
+3. Copy the relevant console output
+4. Include it in your issue report
+
+<Note>
+Be sure to remove any sensitive information (API keys, personal data, etc.)
+from the logs before sharing.
+</Note>
+
+## Disabling debug logs
+
+To disable debug logs:
+
+**In the browser:**
+```js
+localStorage.removeItem('debug')
+// or
+localStorage.setItem('debug', '')
+```
+
+**On the server:**
+Remove or unset the `DEBUG` environment variable:
+```bash
+unset DEBUG
+# or remove it from your .env file
+```
+
+## Private browsing mode
+
+In some environments like Safari's private browsing mode, `localStorage` may not be available.
+The debug functionality gracefully handles this case and will simply not enable debug logs.
+
+From `/home/daytona/workspace/source/packages/nuqs/src/lib/debug.ts:41`:
+
+```ts
+// Check if localStorage is available.
+// It may be unavailable in some environments,
+// like Safari in private browsing mode.
+try {
+  const test = 'nuqs-localStorage-test'
+  if (typeof localStorage === 'undefined') {
+    return false
+  }
+  localStorage.setItem(test, test)
+  const isStorageAvailable = localStorage.getItem(test) === test
+  localStorage.removeItem(test)
+  return (
+    isStorageAvailable &&
+    (localStorage.getItem('debug') || '').includes('nuqs')
+  )
+} catch {
+  return false
+}
+```

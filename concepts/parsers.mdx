@@ -1,0 +1,404 @@
+---
+title: "Parsers"
+description: "Type-safe URL query string parsing and serialization"
+---
+
+## What are parsers?
+
+Parsers are the foundation of type safety in nuqs. They define how to convert between URL query string values (always strings) and your application's typed state values (numbers, booleans, dates, objects, etc.).
+
+Every parser implements two core functions:
+
+```typescript
+type SingleParser<T> = {
+  // Convert query string to typed value
+  parse: (value: string) => T | null
+  
+  // Convert typed value back to query string
+  serialize?: (value: T) => string
+  
+  // Optional: compare two values for equality
+  eq?: (a: T, b: T) => boolean
+}
+```
+
+From `packages/nuqs/src/parsers.ts:7-32`
+
+## Why parsers matter
+
+Without parsers, all URL state would be strings:
+
+```typescript
+const [count, setCount] = useQueryState('count')
+// count is string | null
+// setCount expects string | null
+
+setCount(count + 1) // ❌ Type error: can't add to string
+```
+
+With parsers, you get full type safety:
+
+```typescript
+import { parseAsInteger } from 'nuqs'
+
+const [count, setCount] = useQueryState('count', parseAsInteger)
+// count is number | null
+// setCount expects number | null
+
+setCount(count ?? 0 + 1) // ✅ Works as expected
+```
+
+## Built-in parsers
+
+nuqs provides parsers for common data types:
+
+### Primitive types
+
+```typescript
+import {
+  parseAsString,    // string (default)
+  parseAsInteger,   // number (rounded)
+  parseAsFloat,     // number (decimal)
+  parseAsBoolean,   // boolean
+  parseAsHex        // number (hexadecimal)
+} from 'nuqs'
+
+// Basic usage
+const [name, setName] = useQueryState('name') // string by default
+const [age, setAge] = useQueryState('age', parseAsInteger)
+const [price, setPrice] = useQueryState('price', parseAsFloat)
+const [enabled, setEnabled] = useQueryState('enabled', parseAsBoolean)
+const [color, setColor] = useQueryState('color', parseAsHex) // 0xff00cc
+```
+
+### Date and time
+
+```typescript
+import {
+  parseAsTimestamp,     // milliseconds since epoch
+  parseAsIsoDateTime,   // ISO-8601 with timezone
+  parseAsIsoDate        // ISO-8601 date only (YYYY-MM-DD)
+} from 'nuqs'
+
+const [created, setCreated] = useQueryState('created', parseAsTimestamp)
+// URL: ?created=1704067200000
+// State: Date object
+
+const [due, setDue] = useQueryState('due', parseAsIsoDateTime)
+// URL: ?due=2024-01-01T00:00:00.000Z
+
+const [date, setDate] = useQueryState('date', parseAsIsoDate)
+// URL: ?date=2024-01-01
+// Parsed as Date at 00:00:00 UTC
+```
+
+All date parsers use a custom equality function to compare dates by value:
+
+```typescript
+// From packages/nuqs/src/parsers.ts:275-277
+function compareDates(a: Date, b: Date) {
+  return a.valueOf() === b.valueOf()
+}
+```
+
+### Enums and literals
+
+```typescript
+import { parseAsStringEnum, parseAsStringLiteral, parseAsNumberLiteral } from 'nuqs'
+
+// String-based enum
+enum Direction {
+  up = 'UP',
+  down = 'DOWN',
+  left = 'LEFT',
+  right = 'RIGHT'
+}
+
+const [direction, setDirection] = useQueryState(
+  'direction',
+  parseAsStringEnum<Direction>(Object.values(Direction))
+    .withDefault(Direction.up)
+)
+// URL: ?direction=UP
+// State: Direction.up
+
+// String literals (with const assertion)
+const colors = ['red', 'green', 'blue'] as const
+
+const [color, setColor] = useQueryState(
+  'color',
+  parseAsStringLiteral(colors).withDefault('red')
+)
+// Only accepts 'red' | 'green' | 'blue'
+
+// Number literals
+const diceSides = [1, 2, 3, 4, 5, 6] as const
+
+const [side, setSide] = useQueryState(
+  'side',
+  parseAsNumberLiteral(diceSides).withDefault(4)
+)
+// URL: ?side=4
+// State: 1 | 2 | 3 | 4 | 5 | 6
+```
+
+### Arrays
+
+```typescript
+import { parseAsArrayOf } from 'nuqs'
+
+// Comma-separated array (default separator)
+const [tags, setTags] = useQueryState(
+  'tags',
+  parseAsArrayOf(parseAsString)
+)
+// URL: ?tags=react,typescript,nuqs
+// State: ['react', 'typescript', 'nuqs']
+
+// Array of integers with custom separator
+const [ids, setIds] = useQueryState(
+  'ids',
+  parseAsArrayOf(parseAsInteger, '|')
+)
+// URL: ?ids=1|2|3
+// State: [1, 2, 3]
+```
+
+Items containing the separator are URI-encoded automatically:
+
+```typescript
+setTags(['hello,world', 'foo']) 
+// URL: ?tags=hello%2Cworld,foo
+```
+
+From `packages/nuqs/src/parsers.ts:466-510`
+
+### JSON objects
+
+```typescript
+import { parseAsJson } from 'nuqs'
+import { z } from 'zod'
+
+// With Zod validation
+const pointSchema = z.object({
+  x: z.number(),
+  y: z.number()
+})
+
+const [point, setPoint] = useQueryState(
+  'point',
+  parseAsJson(value => pointSchema.parse(value))
+)
+// URL: ?point=%7B%22x%22%3A10%2C%22y%22%3A20%7D
+// State: { x: 10, y: 20 }
+
+// Without validation (use with caution)
+type Point = { x: number; y: number }
+
+const [point, setPoint] = useQueryState(
+  'point',
+  parseAsJson<Point>(value => value as Point)
+)
+```
+
+<Warning>
+Parsers don't validate data. Always use a schema validation library like Zod for JSON objects.
+</Warning>
+
+The JSON parser includes a custom equality function that compares by value:
+
+```typescript
+// From packages/nuqs/src/parsers.ts:452-455
+eq(a, b) {
+  // Check for referential equality first
+  return a === b || JSON.stringify(a) === JSON.stringify(b)
+}
+```
+
+## Creating custom parsers
+
+Use `createParser` to build parsers with full type safety and builder pattern support:
+
+```typescript
+import { createParser } from 'nuqs'
+
+// Hexadecimal color parser
+const parseAsHexColor = createParser({
+  parse(query: string) {
+    if (!/^[0-9A-Fa-f]{6}$/.test(query)) {
+      return null // Invalid format
+    }
+    return `#${query}`
+  },
+  serialize(value: string) {
+    return value.replace('#', '')
+  }
+})
+
+const [color, setColor] = useQueryState(
+  'color',
+  parseAsHexColor.withDefault('#ff0000')
+)
+// URL: ?color=ff0000
+// State: '#ff0000'
+```
+
+### Parser rules
+
+<Note>
+**Always return `null` for invalid inputs.** Never throw errors in the parse function.
+</Note>
+
+```typescript
+// ✅ Good
+parse(query: string) {
+  const num = parseInt(query)
+  return num == num ? num : null // NaN check
+}
+
+// ❌ Bad
+parse(query: string) {
+  return parseInt(query) // Returns NaN for invalid input
+}
+
+// ❌ Bad
+parse(query: string) {
+  if (!/^\d+$/.test(query)) {
+    throw new Error('Invalid number') // Don't throw
+  }
+  return parseInt(query)
+}
+```
+
+### Composing parsers
+
+You can compose existing parsers to build more complex ones:
+
+```typescript
+import { createParser, parseAsHex } from 'nuqs'
+
+type RGB = { r: number; g: number; b: number }
+
+const parseAsRgb = createParser({
+  parse(query: string) {
+    if (query.length !== 6) {
+      return null
+    }
+    return {
+      r: parseAsHex.parse(query.slice(0, 2)) ?? 0x00,
+      g: parseAsHex.parse(query.slice(2, 4)) ?? 0x00,
+      b: parseAsHex.parse(query.slice(4)) ?? 0x00
+    }
+  },
+  serialize({ r, g, b }: RGB) {
+    return (
+      parseAsHex.serialize(r) +
+      parseAsHex.serialize(g) +
+      parseAsHex.serialize(b)
+    )
+  }
+})
+
+const [color, setColor] = useQueryState(
+  'color',
+  parseAsRgb.withDefault({ r: 255, g: 0, b: 0 })
+)
+```
+
+From the README example.
+
+## Parser builder pattern
+
+All parsers created with `createParser` support a builder pattern for configuration:
+
+### Setting defaults
+
+```typescript
+const [count, setCount] = useQueryState(
+  'count',
+  parseAsInteger.withDefault(0)
+)
+// count is now number (never null)
+
+setCount(c => c + 1) // No null check needed
+setCount(null) // Removes from URL, returns to default (0)
+```
+
+From `packages/nuqs/src/parsers.ts:79-103`
+
+### Setting options
+
+```typescript
+const [query, setQuery] = useQueryState(
+  'q',
+  parseAsString.withOptions({
+    history: 'push',
+    shallow: false,
+    scroll: true
+  })
+)
+```
+
+### Chaining builders
+
+```typescript
+const [sortBy, setSortBy] = useQueryState(
+  'sortBy',
+  parseAsStringLiteral(['asc', 'desc'] as const)
+    .withDefault('asc')
+    .withOptions({ history: 'push' })
+)
+```
+
+## Type inference
+
+Use `inferParserType` to extract the TypeScript type from a parser:
+
+```typescript
+import { parseAsInteger, type inferParserType } from 'nuqs'
+
+const intNullable = parseAsInteger
+const intNonNull = parseAsInteger.withDefault(0)
+
+type A = inferParserType<typeof intNullable> // number | null
+type B = inferParserType<typeof intNonNull>  // number
+
+// Works with parser objects too
+const parsers = {
+  a: parseAsInteger,
+  b: parseAsBoolean.withDefault(false)
+}
+
+type State = inferParserType<typeof parsers>
+// { a: number | null, b: boolean }
+```
+
+From `packages/nuqs/src/parsers.ts:583-588`
+
+## Lossless serialization
+
+<Warning>
+Serializers must be lossless to avoid data loss on page reload.
+</Warning>
+
+```typescript
+// ❌ Bad: loses precision
+const geoCoordParser = createParser({
+  parse: parseFloat,
+  serialize: v => v.toFixed(4) // Rounds to 4 decimal places
+})
+
+const [lat, setLat] = useQueryState('lat', geoCoordParser)
+setLat(1.23456789)
+// URL: ?lat=1.2345
+// State: 1.23456789 (in memory)
+// After reload: 1.2345 (precision lost!)
+
+// ✅ Good: preserves full precision
+const geoCoordParser = createParser({
+  parse: parseFloat,
+  serialize: String // No rounding
+})
+```
+
+From README warning.

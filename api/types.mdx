@@ -1,0 +1,679 @@
+---
+title: TypeScript Types
+description: Complete reference for all TypeScript types and interfaces in nuqs
+---
+
+This page documents all major TypeScript types exported by nuqs. These types help you build type-safe applications with full IntelliSense support.
+
+## Options Types
+
+### Options
+
+The main options object for configuring URL updates and navigation behavior.
+
+```ts
+type Options = {
+  /**
+   * How the query update affects page history
+   *
+   * `push` will create a new history entry, allowing to use the back/forward
+   * buttons to navigate state updates.
+   * `replace` (default) will keep the current history point and only replace
+   * the query string.
+   */
+  history?: HistoryOptions
+
+  /**
+   * Scroll to top after a query state update
+   *
+   * Defaults to `false`, unlike the Next.js router page navigation methods.
+   */
+  scroll?: boolean
+
+  /**
+   * Shallow mode (true by default) keeps query states update client-side only,
+   * meaning there won't be calls to the server.
+   *
+   * Setting it to `false` will trigger a network request to the server with
+   * the updated querystring.
+   */
+  shallow?: boolean
+
+  /**
+   * Limit the rate of URL updates to prevent spamming the browser history,
+   * and the server if `shallow: false`.
+   *
+   * This is to alleviate rate-limiting of the Web History API in browsers,
+   * and defaults to 50ms. Safari requires a higher value of around 120ms.
+   *
+   * Note: the value will be limited to a minimum of 50ms, anything lower
+   * will not have any effect.
+   */
+  limitUrlUpdates?: LimitUrlUpdates
+
+  /**
+   * In RSC frameworks, opt-in to observing Server Component loading states when
+   * doing non-shallow updates by passing a `startTransition` from the
+   * `React.useTransition()` hook.
+   *
+   * In other frameworks, navigation events triggered by a query update can also
+   * be wrapped in a transition this way (e.g. `React.startTransition`).
+   */
+  startTransition?: TransitionStartFunction
+
+  /**
+   * Clear the key-value pair from the URL query string when setting the state
+   * to the default value.
+   *
+   * Defaults to `true` to keep URLs clean.
+   *
+   * Set it to `false` to keep backwards-compatiblity when the default value
+   * changes (prefer explicit URLs whose meaning don't change).
+   */
+  clearOnDefault?: boolean
+}
+```
+
+**Usage:**
+
+```ts
+import { useQueryState, parseAsInteger } from 'nuqs'
+
+function Component() {
+  const [count, setCount] = useQueryState(
+    'count',
+    parseAsInteger.withOptions({
+      history: 'push',
+      scroll: false,
+      shallow: true,
+      clearOnDefault: true
+    })
+  )
+
+  // Or pass options to individual updates
+  const increment = () => setCount(c => c + 1, { history: 'push' })
+}
+```
+
+### HistoryOptions
+
+Controls how URL updates affect browser history.
+
+```ts
+type HistoryOptions = 'replace' | 'push'
+```
+
+- `'replace'` (default): Updates the current history entry
+- `'push'`: Creates a new history entry (enables back/forward navigation)
+
+### LimitUrlUpdates
+
+Configuration for rate-limiting URL updates.
+
+```ts
+type LimitUrlUpdates =
+  | { method: 'debounce'; timeMs: number }
+  | { method: 'throttle'; timeMs: number }
+```
+
+**Usage:**
+
+```ts
+import { useQueryState, parseAsString, throttle, debounce } from 'nuqs'
+
+// Using the helper functions
+const [search, setSearch] = useQueryState(
+  'q',
+  parseAsString.withOptions({
+    limitUrlUpdates: throttle(100) // Update URL at most every 100ms
+  })
+)
+
+// Using the object form
+const [query, setQuery] = useQueryState(
+  'query',
+  parseAsString.withOptions({
+    limitUrlUpdates: { method: 'debounce', timeMs: 300 }
+  })
+)
+```
+
+### SearchParams
+
+Type representing URL search parameters as an object.
+
+```ts
+type SearchParams = Record<string, string | string[] | undefined>
+```
+
+**Usage:**
+
+```ts
+import type { SearchParams } from 'nuqs'
+
+// Next.js App Router
+type PageProps = {
+  searchParams: SearchParams
+}
+
+export default function Page({ searchParams }: PageProps) {
+  // searchParams.tag could be string, string[], or undefined
+  const tag = searchParams.tag
+}
+```
+
+## Parser Types
+
+### SingleParser
+
+Defines a parser for single-value query parameters.
+
+```ts
+type SingleParser<T> = {
+  type?: 'single'
+  
+  /**
+   * Convert a query string value into a state value.
+   *
+   * If the string value does not represent a valid state value,
+   * the parser should return `null`. Throwing an error is also supported.
+   */
+  parse: (value: string) => T | null
+
+  /**
+   * Render the state value into a query string value.
+   */
+  serialize?: (value: T) => string
+
+  /**
+   * Check if two state values are equal.
+   *
+   * This is used when using the `clearOnDefault` value, to compare the default
+   * value with the set value.
+   *
+   * It makes sense to provide this function when the state value is an object
+   * or an array, as the default referential equality check will not work.
+   */
+  eq?: (a: T, b: T) => boolean
+}
+```
+
+**Usage:**
+
+```ts
+import { createParser } from 'nuqs'
+
+const parseAsColor = createParser<string>({
+  parse: (value) => {
+    // Validate color hex code
+    if (/^#[0-9A-F]{6}$/i.test(value)) {
+      return value
+    }
+    return null
+  },
+  serialize: (value) => value
+})
+```
+
+### MultiParser
+
+Defines a parser for multi-value query parameters (e.g., `?tag=a&tag=b`).
+
+```ts
+type MultiParser<T> = {
+  type: 'multi'
+  parse: (value: ReadonlyArray<string>) => T | null
+  serialize?: (value: T) => Array<string>
+  eq?: (a: T, b: T) => boolean
+}
+```
+
+**Usage:**
+
+```ts
+import { createMultiParser } from 'nuqs'
+
+const parseAsTags = createMultiParser<string[]>({
+  parse: (values) => values.length > 0 ? values : null,
+  serialize: (values) => values
+})
+```
+
+### SingleParserBuilder
+
+Enhanced parser with builder methods for setting defaults and options.
+
+```ts
+type SingleParserBuilder<T> = Required<SingleParser<T>> & Options & {
+  /**
+   * Set history type, shallow routing and scroll restoration options
+   * at the hook declaration level.
+   */
+  withOptions<This>(this: This, options: Options): This
+
+  /**
+   * Specifying a default value makes the hook state non-nullable when the
+   * query is missing from the URL: the default value is returned instead
+   * of `null`.
+   */
+  withDefault(
+    this: SingleParserBuilder<T>,
+    defaultValue: NonNullable<T>
+  ): Omit<SingleParserBuilder<T>, 'parseServerSide'> & {
+    readonly defaultValue: NonNullable<T>
+  }
+}
+```
+
+**Usage:**
+
+```ts
+import { parseAsInteger } from 'nuqs'
+
+// Chain builder methods
+const pageParser = parseAsInteger
+  .withDefault(1)
+  .withOptions({ history: 'push' })
+
+const [page, setPage] = useQueryState('page', pageParser)
+// page is number (never null due to default)
+```
+
+### GenericParser
+
+Union type for single or multi parsers.
+
+```ts
+type GenericParser<T> = SingleParser<T> | MultiParser<T>
+```
+
+### GenericParserBuilder
+
+Union type for parser builders.
+
+```ts
+type GenericParserBuilder<T> = SingleParserBuilder<T> | MultiParserBuilder<T>
+```
+
+### ParserMap
+
+Object mapping keys to parsers, used with `useQueryStates`.
+
+```ts
+type ParserMap = Record<string, ParserWithOptionalDefault<any>>
+
+type ParserWithOptionalDefault<T> = GenericParserBuilder<T> & {
+  defaultValue?: T
+}
+```
+
+**Usage:**
+
+```ts
+import { useQueryStates, parseAsInteger, parseAsString } from 'nuqs'
+
+const parsers = {
+  page: parseAsInteger.withDefault(1),
+  search: parseAsString,
+  sort: parseAsStringLiteral(['asc', 'desc'] as const).withDefault('asc')
+} satisfies ParserMap
+
+const [{ page, search, sort }, setAll] = useQueryStates(parsers)
+```
+
+## Hook Return Types
+
+### UseQueryStateReturn
+
+Return type for the `useQueryState` hook.
+
+```ts
+type UseQueryStateReturn<Parsed, Default> = [
+  Default extends undefined
+    ? Parsed | null  // value can be null if no default
+    : Parsed,        // value is non-nullable with default
+  (
+    value:
+      | null
+      | Parsed
+      | ((old: Default extends Parsed ? Parsed : Parsed | null) => Parsed | null),
+    options?: Options
+  ) => Promise<URLSearchParams>
+]
+```
+
+**Usage:**
+
+```ts
+import { useQueryState, parseAsInteger } from 'nuqs'
+
+// Without default - state can be null
+const [count, setCount] = useQueryState('count', parseAsInteger)
+//     ^? number | null
+
+// With default - state is never null
+const [page, setPage] = useQueryState('page', parseAsInteger.withDefault(1))
+//     ^? number
+
+// Setter accepts value, updater function, or null
+setCount(42)
+setCount(old => old ? old + 1 : 1)
+setCount(null) // Clear from URL
+```
+
+### UseQueryStatesReturn
+
+Return type for the `useQueryStates` hook.
+
+```ts
+type UseQueryStatesReturn<T extends UseQueryStatesKeysMap> = [
+  Values<T>,
+  SetValues<T>
+]
+
+type Values<T extends UseQueryStatesKeysMap> = {
+  [K in keyof T]: T[K]['defaultValue'] extends NonNullable<ReturnType<T[K]['parse']>>
+    ? NonNullable<ReturnType<T[K]['parse']>>
+    : ReturnType<T[K]['parse']> | null
+}
+
+type SetValues<T extends UseQueryStatesKeysMap> = (
+  values: Partial<Nullable<Values<T>>> | UpdaterFn<T> | null,
+  options?: Options
+) => Promise<URLSearchParams>
+```
+
+**Usage:**
+
+```ts
+import { useQueryStates, parseAsInteger, parseAsString } from 'nuqs'
+
+const [state, setState] = useQueryStates({
+  page: parseAsInteger.withDefault(1),
+  search: parseAsString
+})
+
+// State is inferred correctly
+state.page   // number
+state.search // string | null
+
+// Update single or multiple values
+setState({ page: 2 })
+setState({ page: 2, search: 'query' })
+setState(old => ({ page: old.page + 1 }))
+setState(null) // Clear all
+```
+
+## Utility Types
+
+### inferParserType
+
+Type helper to extract the returned data type from a parser or parser map.
+
+```ts
+type inferParserType<Input> =
+  Input extends GenericParserBuilder<any>
+    ? inferSingleParserType<Input>
+    : Input extends Record<string, GenericParserBuilder<any>>
+      ? inferParserRecordType<Input>
+      : never
+```
+
+**Usage:**
+
+```ts
+import { parseAsInteger, parseAsBoolean, type inferParserType } from 'nuqs'
+
+// Single parser
+const intParser = parseAsInteger
+type IntType = inferParserType<typeof intParser>
+// ^? number | null
+
+const intWithDefault = parseAsInteger.withDefault(0)
+type IntDefaultType = inferParserType<typeof intWithDefault>
+// ^? number
+
+// Parser map
+const parsers = {
+  page: parseAsInteger.withDefault(1),
+  enabled: parseAsBoolean
+}
+type ParsedState = inferParserType<typeof parsers>
+// ^? { page: number; enabled: boolean | null }
+```
+
+### Nullable
+
+Makes all properties of an object nullable.
+
+```ts
+type Nullable<T> = {
+  [K in keyof T]: T[K] | null
+} & {}
+```
+
+**Usage:**
+
+```ts
+import type { Nullable } from 'nuqs'
+
+type Filters = {
+  page: number
+  search: string
+}
+
+type NullableFilters = Nullable<Filters>
+// ^? { page: number | null; search: string | null }
+
+// Used internally by setState to allow clearing values
+setState({ page: null, search: null })
+```
+
+### UrlKeys
+
+Helper type to define URL key mappings for renaming search params.
+
+```ts
+type UrlKeys<Parsers extends Record<string, any>> = Partial<
+  Record<keyof Parsers, string>
+>
+```
+
+**Usage:**
+
+```ts
+import { useQueryStates, createSerializer, type UrlKeys } from 'nuqs'
+
+const coordinatesSearchParams = {
+  latitude: parseAsFloat.withDefault(0),
+  longitude: parseAsFloat.withDefault(0)
+}
+
+// Define URL key mappings
+const coordinatesUrlKeys: UrlKeys<typeof coordinatesSearchParams> = {
+  latitude: 'lat',
+  longitude: 'lng'
+}
+
+// Use in hooks
+useQueryStates(coordinatesSearchParams, {
+  urlKeys: coordinatesUrlKeys
+})
+// URL: ?lat=51.5&lng=-0.1 instead of ?latitude=51.5&longitude=-0.1
+
+// Use in serializers
+createSerializer(coordinatesSearchParams, {
+  urlKeys: coordinatesUrlKeys
+})
+```
+
+## Adapter Types
+
+### AdapterInterface
+
+Interface that framework adapters must implement.
+
+```ts
+type AdapterInterface = {
+  searchParams: URLSearchParams
+  updateUrl: UpdateUrlFunction
+  getSearchParamsSnapshot?: () => URLSearchParams
+  rateLimitFactor?: number
+  autoResetQueueOnUpdate?: boolean
+}
+```
+
+### UpdateUrlFunction
+
+Function signature for updating the URL.
+
+```ts
+type UpdateUrlFunction = (
+  search: URLSearchParams,
+  options: Required<AdapterOptions>
+) => void
+```
+
+### AdapterOptions
+
+Options available to adapters.
+
+```ts
+type AdapterOptions = Pick<Options, 'history' | 'scroll' | 'shallow'>
+```
+
+### UseAdapterHook
+
+Hook signature for creating adapters.
+
+```ts
+type UseAdapterHook = (watchKeys: string[]) => AdapterInterface
+```
+
+**Usage:**
+
+```ts
+import { createAdapter } from 'nuqs/adapters'
+import type { UseAdapterHook } from 'nuqs'
+
+const useMyAdapter: UseAdapterHook = (watchKeys) => {
+  return {
+    searchParams: new URLSearchParams(window.location.search),
+    updateUrl: (search, options) => {
+      // Update URL logic
+    }
+  }
+}
+
+export const MyAdapter = createAdapter(useMyAdapter)
+```
+
+## Loader Types
+
+### LoaderInput
+
+Accepted input types for loaders.
+
+```ts
+type LoaderInput =
+  | URL
+  | Request
+  | URLSearchParams
+  | Record<string, string | string[] | undefined>
+  | string
+```
+
+### LoaderFunction
+
+Function signature for loader functions created with `createLoader`.
+
+```ts
+type LoaderFunction<Parsers extends ParserMap> = {
+  (input: LoaderInput, options?: LoaderFunctionOptions): inferParserType<Parsers>
+  (input: Promise<LoaderInput>, options?: LoaderFunctionOptions): Promise<inferParserType<Parsers>>
+}
+```
+
+### LoaderFunctionOptions
+
+Options for loader functions.
+
+```ts
+type LoaderFunctionOptions = {
+  /**
+   * Whether to use strict parsing. If true, the loader will throw an error if
+   * any of the parsers fail to parse their respective values. If false, the
+   * loader will return null or their default value for any failed parsers.
+   */
+  strict?: boolean
+}
+```
+
+### CreateLoaderOptions
+
+Options for creating a loader.
+
+```ts
+type CreateLoaderOptions<P extends ParserMap> = {
+  urlKeys?: UrlKeys<P>
+}
+```
+
+**Usage:**
+
+```ts
+import { createLoader, parseAsInteger, parseAsString } from 'nuqs/server'
+import type { LoaderFunction } from 'nuqs/server'
+
+const parsers = {
+  page: parseAsInteger.withDefault(1),
+  search: parseAsString
+}
+
+const loadSearchParams = createLoader(parsers, {
+  urlKeys: { page: 'p' }
+})
+
+// Use in React Router loader
+export async function loader({ request }: LoaderFunctionArgs) {
+  const { page, search } = loadSearchParams(request)
+  return { page, search }
+}
+
+// Use in Next.js API route
+export async function GET(request: Request) {
+  const { page, search } = loadSearchParams(request.url)
+  return Response.json({ page, search })
+}
+```
+
+## Deprecated Types
+
+### Parser (deprecated)
+
+<Warning>
+Use `SingleParser` instead. This type is kept for backwards compatibility.
+</Warning>
+
+```ts
+/** @deprecated use SingleParser instead */
+type Parser<T> = SingleParser<T>
+```
+
+### ParserBuilder (deprecated)
+
+<Warning>
+Use `SingleParserBuilder` instead. This type is kept for backwards compatibility.
+</Warning>
+
+```ts
+/** @deprecated use SingleParserBuilder instead */
+type ParserBuilder<T> = SingleParserBuilder<T>
+```
+
+## See Also
+
+- [Parsers](/concepts/parsers) - Learn about built-in parsers
+- [Custom Parsers](/advanced/custom-parsers) - Create your own parsers
+- [Options](/concepts/options) - Detailed options documentation
+- [Adapters](/concepts/adapters) - Framework adapter concepts

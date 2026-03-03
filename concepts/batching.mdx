@@ -1,0 +1,436 @@
+---
+title: "Batching and Throttling"
+description: "How nuqs efficiently handles multiple URL updates in the same event loop"
+---
+
+## Overview
+
+When you update multiple search params in quick succession, nuqs automatically batches them into a single URL update. This prevents redundant history entries and avoids browser rate limiting.
+
+```typescript
+const [lat, setLat] = useQueryState('lat', parseAsFloat)
+const [lng, setLng] = useQueryState('lng', parseAsFloat)
+
+function updateLocation() {
+  setLat(48.8566)  // Queued
+  setLng(2.3522)   // Queued
+  // Both updates applied together to URL: ?lat=48.8566&lng=2.3522
+}
+```
+
+## How batching works
+
+### Event loop batching
+
+All state updates in the same JavaScript event loop tick are automatically batched:
+
+```typescript
+const [search, setSearch] = useQueryState('q')
+const [page, setPage] = useQueryState('page', parseAsInteger)
+const [sort, setSort] = useQueryState('sort')
+
+function applyFilters() {
+  setSearch('react')
+  setPage(1)
+  setSort('newest')
+  // Single URL update: ?q=react&page=1&sort=newest
+}
+```
+
+From the README:
+> "You can call as many state update functions as needed in a single event loop tick, and they will be applied to the URL asynchronously."
+
+### The update queue
+
+Internally, nuqs uses a `ThrottledQueue` to manage updates:
+
+```typescript
+// From packages/nuqs/src/lib/queues/throttle.ts:31-44
+export class ThrottledQueue {
+  updateMap: UpdateMap = new Map()  // Stores pending updates
+  options: Required<AdapterOptions> = {
+    history: 'replace',
+    scroll: false,
+    shallow: true
+  }
+  timeMs: number = defaultRateLimit.timeMs
+  transitions: TransitionSet = new Set()
+  // ...
+}
+```
+
+When you call `setState`:
+
+1. Update is added to the queue
+2. If another update for the same key exists, it's replaced
+3. Options are merged (preserving the most permissive settings)
+4. A flush is scheduled for the next tick
+
+From `packages/nuqs/src/lib/queues/throttle.ts:45-72`:
+
+```typescript
+push({ key, query, options }: UpdateQueuePushArgs, timeMs: number): void {
+  // Enqueue update
+  this.updateMap.set(key, query)
+  
+  // Merge options (preserve most permissive)
+  if (options.history === 'push') {
+    this.options.history = 'push'
+  }
+  if (options.scroll) {
+    this.options.scroll = true
+  }
+  if (options.shallow === false) {
+    this.options.shallow = false
+  }
+  // Keep the maximum throttle value
+  if (!Number.isFinite(this.timeMs) || timeMs > this.timeMs) {
+    this.timeMs = timeMs
+  }
+}
+```
+
+### Flushing the queue
+
+The queue flushes on the next event loop tick, respecting the throttle limit:
+
+```typescript
+// From packages/nuqs/src/lib/queues/throttle.ts:120-143
+const runOnNextTick = () => {
+  const now = performance.now()
+  const timeSinceLastFlush = now - this.lastFlushedAt
+  const timeMs = this.timeMs
+  const flushInMs = rateLimitFactor * Math.max(0, timeMs - timeSinceLastFlush)
+  
+  if (flushInMs === 0) {
+    flushNow() // Flush immediately if enough time has passed
+  } else {
+    timeout(flushNow, flushInMs, this.controller!.signal) // Wait
+  }
+}
+```
+
+## Throttling
+
+### Default throttle
+
+To prevent browser rate limiting, nuqs throttles URL updates:
+
+- **Chrome/Firefox**: 50ms between updates (default)
+- **Safari 17+**: 120ms between updates
+- **Safari &lt;17**: 320ms between updates
+
+The default is automatically detected:
+
+```typescript
+// From packages/nuqs/src/lib/queues/rate-limiting.ts:6-20
+function getDefaultThrottle() {
+  if (typeof window === 'undefined') return 50
+  const isSafari = Boolean(window.GestureEvent)
+  if (!isSafari) return 50
+  
+  try {
+    const match = navigator.userAgent?.match(/version\/([\d\.]+) safari/i)
+    return parseFloat(match![1]!) >= 17 ? 120 : 320
+  } catch {
+    return 320
+  }
+}
+```
+
+### Why throttle?
+
+Browsers rate-limit history API calls to prevent abuse:
+- Safari allows only 100 updates per 10 seconds (Safari 17+) or 30 seconds (older)
+- Exceeding this causes errors and breaks navigation
+
+<Warning>
+Throttling only affects URL updates and server requests. State updates are **always immediate** to keep UI responsive.
+</Warning>
+
+### Custom throttle values
+
+You can override the default throttle:
+
+```typescript
+import { throttle } from 'nuqs'
+
+const [query, setQuery] = useQueryState('q', {
+  shallow: false,
+  limitUrlUpdates: throttle(1000) // Max 1 server request per second
+})
+```
+
+### Minimum throttle value
+
+Values below 50ms are ignored:
+
+```typescript
+throttle(10) // Treated as 50ms
+throttle(0)  // Treated as 50ms
+```
+
+This prevents rate-limiting errors even if you try to disable throttling.
+
+## Debouncing
+
+For high-frequency updates (like text input), debouncing waits for a pause before updating the URL:
+
+```typescript
+import { debounce } from 'nuqs'
+
+const [query, setQuery] = useQueryState('q', {
+  shallow: false,
+  limitUrlUpdates: debounce(300) // Wait 300ms after typing stops
+})
+
+function SearchInput() {
+  return (
+    <input
+      value={query ?? ''}
+      onChange={e => setQuery(e.target.value)}
+    />
+  )
+}
+```
+
+Behavior:
+- User types "h" → state updates, debounce starts
+- User types "e" → state updates, debounce resets
+- User types "llo" → state updates, debounce resets
+- 300ms passes with no typing → URL updates to `?q=hello`
+
+This is especially useful with `shallow: false` to avoid server requests on every keystroke.
+
+## Await URL updates
+
+All `setState` functions return a Promise that resolves when the URL has been updated:
+
+```typescript
+const [lat, setLat] = useQueryState('lat', parseAsFloat)
+const [lng, setLng] = useQueryState('lng', parseAsFloat)
+
+async function updateLocation() {
+  setLat(48.8566)
+  const search = await setLng(2.3522)
+  
+  // URL has been updated
+  console.log(search.get('lat')) // '48.8566'
+  console.log(search.get('lng')) // '2.3522'
+}
+```
+
+From the README:
+> "If you wish to know when the URL has been updated, and what it contains, you can await the Promise returned by the state updater function, which gives you the updated URLSearchParameters object."
+
+### Promise caching
+
+The returned Promise is cached until the next flush:
+
+```typescript
+const promise1 = setLat(48.8566)
+const promise2 = setLng(2.3522)
+
+promise1 === promise2 // true (same event loop tick)
+```
+
+From the README:
+> "The returned Promise is cached until the next flush to the URL occurs, so all calls to a setState (of any hook) in the same event loop tick will return the same Promise reference."
+
+## Option merging
+
+When batching updates with different options, nuqs merges them intelligently:
+
+### History mode
+
+If any update uses `push`, all updates use `push`:
+
+```typescript
+setLat(48.8566, { history: 'replace' })
+setLng(2.3522, { history: 'push' })
+// Result: Both updates use 'push'
+```
+
+From `packages/nuqs/src/lib/queues/throttle.ts:56-58`:
+
+```typescript
+if (options.history === 'push') {
+  this.options.history = 'push'
+}
+```
+
+### Scroll option
+
+If any update requests scroll, the page scrolls:
+
+```typescript
+setLat(48.8566, { scroll: false })
+setLng(2.3522, { scroll: true })
+// Result: Page scrolls to top
+```
+
+### Shallow mode
+
+If any update uses `shallow: false`, the server is notified:
+
+```typescript
+setLat(48.8566, { shallow: true })
+setLng(2.3522, { shallow: false })
+// Result: Server Components re-render
+```
+
+### Throttle time
+
+The highest throttle value wins:
+
+```typescript
+import { throttle } from 'nuqs'
+
+setLat(48.8566, { limitUrlUpdates: throttle(100) })
+setLng(2.3522, { limitUrlUpdates: throttle(500) })
+// Result: Updates throttled at 500ms
+```
+
+From `packages/nuqs/src/lib/queues/throttle.ts:68-71`:
+
+```typescript
+// Keep the maximum finite throttle value
+if (!Number.isFinite(this.timeMs) || timeMs > this.timeMs) {
+  this.timeMs = timeMs
+}
+```
+
+## Using useQueryStates
+
+For related query params that should always update together, use `useQueryStates`:
+
+```typescript
+import { useQueryStates, parseAsFloat } from 'nuqs'
+
+const [coords, setCoords] = useQueryStates(
+  {
+    lat: parseAsFloat.withDefault(45.18),
+    lng: parseAsFloat.withDefault(5.72)
+  },
+  {
+    history: 'push'
+  }
+)
+
+// Update both at once (guaranteed atomic)
+setCoords({ lat: 48.8566, lng: 2.3522 })
+
+// Or update a subset
+setCoords({ lat: 48.8566 }) // Only updates lat, preserves lng
+```
+
+From the README.
+
+## Performance implications
+
+### State updates: O(1)
+
+State updates are synchronous and immediate:
+
+```typescript
+setLat(48.8566)
+console.log(lat) // 48.8566 immediately
+```
+
+### URL updates: throttled
+
+URL updates are async and throttled:
+
+```typescript
+setLat(48.8566)
+console.log(window.location.search) // Still old value
+
+await new Promise(resolve => setTimeout(resolve, 100))
+console.log(window.location.search) // Updated
+```
+
+### Memory usage
+
+The queue stores only the **latest value** for each key:
+
+```typescript
+for (let i = 0; i < 1000; i++) {
+  setLat(i)
+}
+// Queue size: 1 (only lat=999)
+// Memory: O(number of unique keys)
+```
+
+## Debugging batching
+
+Enable debug logs to see batching in action:
+
+```javascript
+localStorage.setItem('debug', 'nuqs')
+```
+
+You'll see logs like:
+
+```
+[nuqs gtq] Enqueueing lat=48.8566
+[nuqs gtq] Enqueueing lng=2.3522
+[nuqs gtq] Scheduling flush in 50ms. Throttled at 50ms (x1)
+[nuqs gtq] Flushing queue {lat: '48.8566', lng: '2.3522'}
+```
+
+From the README debugging section.
+
+## Edge cases
+
+### Aborting pending updates
+
+Navigating away or unmounting aborts pending updates:
+
+```typescript
+setLat(48.8566)
+setLng(2.3522)
+router.push('/other-page') // Pending updates are aborted
+```
+
+### Infinite throttle
+
+Setting `throttleMs: Infinity` prevents URL updates entirely:
+
+```typescript
+import { throttle } from 'nuqs'
+
+const [state, setState] = useQueryState('key', {
+  limitUrlUpdates: throttle(Infinity)
+})
+
+setState('value') // State updates, URL never updates
+```
+
+From `packages/nuqs/src/lib/queues/throttle.ts:93-96`:
+
+```typescript
+if (!Number.isFinite(this.timeMs)) {
+  debug('[nuqs gtq] Skipping flush due to throttleMs=Infinity')
+  return Promise.resolve(getSearchParamsSnapshot())
+}
+```
+
+### Concurrent rendering
+
+Adapters control whether to reset the queue immediately or wait:
+
+```typescript
+type AdapterInterface = {
+  // ...
+  autoResetQueueOnUpdate?: boolean
+}
+```
+
+Next.js sets this to `false` to handle React 18's concurrent rendering:
+
+```typescript
+// From packages/nuqs/src/adapters/next.ts:18
+autoResetQueueOnUpdate: false
+```
+
+This prevents race conditions during Suspense boundaries and concurrent updates.

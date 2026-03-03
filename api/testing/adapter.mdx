@@ -1,0 +1,304 @@
+---
+title: NuqsTestingAdapter
+description: API reference for the NuqsTestingAdapter component and testing utilities
+---
+
+The `NuqsTestingAdapter` provides a test environment for components that use nuqs hooks. It simulates URL state management without requiring a real router, making it easy to test components in isolation.
+
+## NuqsTestingAdapter
+
+A React component that provides a testing context for nuqs hooks.
+
+### Props
+
+<ParamField path="searchParams" type="string | Record<string, string> | URLSearchParams">
+  Initial search params for the test. Can be provided as:
+  - A query string: `"?foo=bar&baz=qux"`
+  - A record object: `{ foo: "bar", baz: "qux" }`
+  - A URLSearchParams instance: `new URLSearchParams("foo=bar")`
+  
+  Defaults to an empty string (no search params).
+</ParamField>
+
+<ParamField path="onUrlUpdate" type="OnUrlUpdateFunction">
+  A callback function invoked whenever the URL is updated. Useful for asserting URL changes in tests.
+  
+  The function receives a [`UrlUpdateEvent`](#urlupdateevent) object containing:
+  - `searchParams`: The new search params as a `URLSearchParams` instance
+  - `queryString`: The rendered query string
+  - `options`: The options used for the URL update
+  
+  ```tsx
+  const onUrlUpdate = vi.fn<OnUrlUpdateFunction>()
+  
+  render(<Component />, {
+    wrapper: withNuqsTestingAdapter({ onUrlUpdate })
+  })
+  
+  // Later in your test
+  expect(onUrlUpdate).toHaveBeenCalledWith({
+    searchParams: expect.any(URLSearchParams),
+    queryString: '?foo=bar',
+    options: expect.objectContaining({
+      history: 'push'
+    })
+  })
+  ```
+</ParamField>
+
+<ParamField path="hasMemory" type="boolean" default="false">
+  Controls whether the adapter stores search params in memory and updates them on each URL change.
+  
+  - `false` (default): The adapter is **immutable**. Search params remain frozen to the initial value. This encourages testing discrete units of behavior.
+  - `true`: The adapter behaves like framework adapters, storing updates in memory so subsequent updates build on the previous state.
+  
+  ```tsx
+  // Immutable (default) - always starts from initial state
+  withNuqsTestingAdapter({ searchParams: '?count=0' })
+  
+  // Stateful - updates accumulate
+  withNuqsTestingAdapter({ searchParams: '?count=0', hasMemory: true })
+  ```
+</ParamField>
+
+<ParamField path="autoResetQueueOnUpdate" type="boolean" default="true">
+  Whether to automatically reset the URL update queue after each update.
+  
+  In production, nuqs batches and throttles URL updates. This option controls whether the queue should be cleared after processing updates during tests.
+</ParamField>
+
+<ParamField path="resetUrlUpdateQueueOnMount" type="boolean" default="true">
+  Whether to clear the URL update queue when the adapter mounts.
+  
+  Since the update queue is a shared global, this option ensures test isolation by clearing the queue before each test. Set to `false` to preserve the queue between renders for testing edge cases.
+</ParamField>
+
+<ParamField path="rateLimitFactor" type="number" default="0">
+  Controls throttling behavior during tests.
+  
+  - `0` (default): No throttling - updates are immediate
+  - `1`: Production throttling (≥50ms)
+  - Other values: Custom throttling factor
+  
+  Most tests should use the default to avoid timing-related flakiness.
+</ParamField>
+
+<ParamField path="defaultOptions" type="object">
+  Default options to apply to all `useQueryState` hooks within this adapter.
+  
+  ```tsx
+  withNuqsTestingAdapter({
+    defaultOptions: {
+      shallow: false,
+      scroll: true,
+      clearOnDefault: true,
+      limitUrlUpdates: false
+    }
+  })
+  ```
+  
+  Supported options:
+  - `shallow`: Whether to use shallow routing (framework-specific)
+  - `scroll`: Whether to scroll to top on URL updates
+  - `clearOnDefault`: Whether to remove the key from URL when set to default value
+  - `limitUrlUpdates`: Whether to limit the rate of URL updates
+</ParamField>
+
+<ParamField path="processUrlSearchParams" type="(search: URLSearchParams) => URLSearchParams">
+  A function to process or transform search params before they're used by hooks.
+  
+  ```tsx
+  withNuqsTestingAdapter({
+    processUrlSearchParams: (search) => {
+      // Example: add authentication token to all requests
+      search.set('token', 'test-token')
+      return search
+    }
+  })
+  ```
+</ParamField>
+
+<ParamField path="children" type="ReactNode" required>
+  The components to render within the testing adapter context.
+</ParamField>
+
+## withNuqsTestingAdapter
+
+A higher-order component that creates a wrapper function for testing libraries that support wrapper components (e.g., Testing Library, Vitest).
+
+### Signature
+
+```ts
+function withNuqsTestingAdapter(
+  props?: Omit<TestingAdapterProps, 'children'>
+): ({ children }: { children: ReactNode }) => ReactElement
+```
+
+### Parameters
+
+Accepts all [`NuqsTestingAdapter`](#nuqstestingadapter) props except `children`.
+
+### Returns
+
+A wrapper component function that can be passed to testing library render methods.
+
+### Usage
+
+```tsx
+import { withNuqsTestingAdapter } from 'nuqs/adapters/testing'
+import { renderHook } from '@testing-library/react'
+
+const { result } = renderHook(() => useQueryState('foo'), {
+  wrapper: withNuqsTestingAdapter({
+    searchParams: '?foo=bar'
+  })
+})
+```
+
+## Types
+
+### UrlUpdateEvent
+
+The event object passed to the `onUrlUpdate` callback.
+
+```ts
+type UrlUpdateEvent = {
+  searchParams: URLSearchParams
+  queryString: string
+  options: Required<AdapterOptions>
+}
+```
+
+<ParamField path="searchParams" type="URLSearchParams">
+  The new search params as a `URLSearchParams` instance. This is a copy that can be safely inspected or modified.
+</ParamField>
+
+<ParamField path="queryString" type="string">
+  The rendered query string representation of the search params (e.g., `"?foo=bar&baz=qux"`).
+</ParamField>
+
+<ParamField path="options" type="Required<AdapterOptions>">
+  The options used for the URL update:
+  
+  - `history`: `"push"` | `"replace"` - The history method used
+  - `scroll`: `boolean` - Whether to scroll to top
+  - `shallow`: `boolean` - Whether shallow routing was used
+</ParamField>
+
+### OnUrlUpdateFunction
+
+The type signature for the `onUrlUpdate` callback function.
+
+```ts
+type OnUrlUpdateFunction = (event: UrlUpdateEvent) => void
+```
+
+## Complete Example
+
+Here's a complete example testing a counter component:
+
+```tsx title="counter.test.tsx"
+import { render, screen } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
+import { describe, expect, it, vi } from 'vitest'
+import { 
+  withNuqsTestingAdapter, 
+  type OnUrlUpdateFunction 
+} from 'nuqs/adapters/testing'
+import { Counter } from './counter'
+
+describe('Counter', () => {
+  it('should increment count and update URL', async () => {
+    const user = userEvent.setup()
+    const onUrlUpdate = vi.fn<OnUrlUpdateFunction>()
+    
+    // 1. Setup: Render with initial search params
+    render(<Counter />, {
+      wrapper: withNuqsTestingAdapter({ 
+        searchParams: '?count=5',
+        onUrlUpdate 
+      })
+    })
+    
+    // 2. Act: Click the increment button
+    const button = screen.getByRole('button', { name: /increment/i })
+    await user.click(button)
+    
+    // 3. Assert: Check state and URL updates
+    expect(button).toHaveTextContent('6')
+    expect(onUrlUpdate).toHaveBeenCalledOnce()
+    
+    const event = onUrlUpdate.mock.calls[0][0]
+    expect(event.queryString).toBe('?count=6')
+    expect(event.searchParams.get('count')).toBe('6')
+    expect(event.options.history).toBe('push')
+  })
+  
+  it('should handle multiple updates with hasMemory', async () => {
+    const user = userEvent.setup()
+    const onUrlUpdate = vi.fn<OnUrlUpdateFunction>()
+    
+    render(<Counter />, {
+      wrapper: withNuqsTestingAdapter({ 
+        searchParams: '?count=0',
+        hasMemory: true,
+        onUrlUpdate 
+      })
+    })
+    
+    const button = screen.getByRole('button', { name: /increment/i })
+    
+    // First click
+    await user.click(button)
+    expect(onUrlUpdate).toHaveBeenCalledTimes(1)
+    expect(onUrlUpdate.mock.calls[0][0].queryString).toBe('?count=1')
+    
+    // Second click - with hasMemory, it builds on previous state
+    await user.click(button)
+    expect(onUrlUpdate).toHaveBeenCalledTimes(2)
+    expect(onUrlUpdate.mock.calls[1][0].queryString).toBe('?count=2')
+  })
+  
+  it('should work with object syntax for searchParams', () => {
+    const onUrlUpdate = vi.fn<OnUrlUpdateFunction>()
+    
+    render(<Counter />, {
+      wrapper: withNuqsTestingAdapter({ 
+        searchParams: { count: '10', page: '1' },
+        onUrlUpdate 
+      })
+    })
+    
+    expect(screen.getByRole('button')).toHaveTextContent('10')
+  })
+})
+```
+
+## Direct Component Usage
+
+You can also use `NuqsTestingAdapter` directly as a component:
+
+```tsx
+import { NuqsTestingAdapter } from 'nuqs/adapters/testing'
+import { render } from '@testing-library/react'
+
+it('should render with initial params', () => {
+  const onUrlUpdate = vi.fn()
+  
+  render(
+    <NuqsTestingAdapter 
+      searchParams="?search=hello&limit=10"
+      onUrlUpdate={onUrlUpdate}
+    >
+      <MySearchComponent />
+    </NuqsTestingAdapter>
+  )
+  
+  // Your assertions here
+})
+```
+
+## See Also
+
+- [Testing Guide](/advanced/testing) - Complete guide to testing with nuqs
+- [Custom Adapters](/adapters/custom) - Creating custom adapters for other frameworks

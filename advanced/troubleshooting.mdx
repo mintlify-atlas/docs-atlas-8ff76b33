@@ -1,0 +1,355 @@
+---
+title: Troubleshooting
+description: Common issues and solutions when using nuqs
+---
+
+<Note>
+Check out the list of [known issues and solutions](https://github.com/47ng/nuqs/issues/423)
+on GitHub for community-reported problems and fixes.
+</Note>
+
+## Common Issues
+
+<Accordion title="nuqs requires an adapter to work with your framework">
+
+### Error: NUQS-404
+
+This error occurs when you haven't wrapped the components calling `useQueryState(s)` with an adapter.
+
+**Solution:**
+
+Follow the setup instructions to import and wrap your application using a suitable adapter:
+
+- [Next.js (app router)](/adapters/nextjs-app)
+- [Next.js (pages router)](/adapters/nextjs-pages)
+- [React SPA (eg: with Vite)](/adapters/react)
+- [Remix](/adapters/remix)
+- [React Router](/adapters/react-router)
+- [TanStack Router](/adapters/tanstack-router)
+
+**In tests:**
+
+If you encounter this error in a test runner (eg: Vitest or Jest), use the [testing adapter](/advanced/testing)
+from `nuqs/adapters/testing`.
+
+**In monorepos:**
+
+This error can occur when components using nuqs hooks are in different packages resolving
+to different `nuqs` versions. Make sure that all packages resolve to the same version
+of `nuqs`. See [issue #798](https://github.com/47ng/nuqs/issues/798) for more details.
+
+</Accordion>
+
+<Accordion title="URL update rate-limited by the browser">
+
+### Error: NUQS-429
+
+This error occurs when too many URL updates are attempted in a short period of time,
+such as connecting a query state to a text input or slider.
+
+**Solution:**
+
+The library has a built-in throttling mechanism that can be configured:
+
+```ts
+useQueryState('search', {
+  throttleMs: 1000 // Update URL max once per second
+})
+
+// Or pass it to setState:
+setSearch(value, { throttleMs: 1000 })
+```
+
+**Safari considerations:**
+
+Safari has very strict rate limits:
+- 100 updates per 30 seconds (Safari 16 and earlier)
+- 100 updates per 10 seconds (Safari 17+)
+
+For Safari compatibility, use a higher throttle value (300-500ms).
+
+</Accordion>
+
+<Accordion title="Max Safe URL Length Exceeded">
+
+### Error: NUQS-414
+
+This error occurs if your URL length exceeds 2,000 characters.
+
+**Why this matters:**
+
+- Some browsers have varying URL length limits
+- Long URLs may not be processed by some servers
+- URLs may break or be truncated
+
+**Solution:**
+
+Keeping your URLs short is a good practice. Not all state has to live in the URL.
+
+Consider alternatives for different types of state:
+
+- **Server state/data**: Use TanStack Query or SWR
+- **Transient state**: Use local React state
+- **Device-persistent state**: Use localStorage
+
+**Questions to ask:**
+
+- Do I need it to persist across page refresh?
+- Do I need to share it with others?
+- Do I need to link to it from other places?
+- Do I need to be able to bookmark it?
+- Do I need Back/Forward buttons to navigate it?
+- Is it always going to be a small amount of data?
+
+If the answer to any is "no", consider an alternative storage solution.
+
+</Accordion>
+
+<Accordion title="Multiple versions of the library are loaded">
+
+### Error: NUQS-409
+
+This error occurs if two different versions of `nuqs` are loaded in the same application.
+
+**Common causes:**
+
+- Using a package that embeds `nuqs` while also using `nuqs` directly
+- Monorepo packages resolving to different versions
+
+**Solution:**
+
+Inspect your dependencies for duplicate versions:
+
+```bash
+# With npm
+npm ls nuqs
+
+# With pnpm
+pnpm why nuqs
+
+# With yarn
+yarn why nuqs
+```
+
+Use the `resolutions` field in `package.json` to force all dependencies to use the same version:
+
+```json title="package.json"
+{
+  "resolutions": {
+    "nuqs": "2.0.0"
+  }
+}
+```
+
+For pnpm, use `overrides`:
+
+```json title="package.json"
+{
+  "pnpm": {
+    "overrides": {
+      "nuqs": "2.0.0"
+    }
+  }
+}
+```
+
+</Accordion>
+
+<Accordion title="Missing Suspense boundary with useSearchParams">
+
+### Next.js Error
+
+You may have encountered this [error message](https://nextjs.org/docs/messages/missing-suspense-with-csr-bailout)
+from Next.js:
+
+```
+Missing Suspense boundary with useSearchParams
+```
+
+**Quick fix:**
+
+Add the `'use client'` directive to your page:
+
+```tsx
+'use client'
+
+export default function Page() {
+  return (
+    <Suspense>
+      <Client />
+    </Suspense>
+  )
+}
+
+function Client() {
+  const [foo, setFoo] = useQueryState('foo')
+  // ...
+}
+```
+
+**Recommended approach:**
+
+1. Keep `page.tsx` as a server component (no `'use client'` directive)
+2. Move client-side features into a separate client file
+3. Wrap the client component in a `<Suspense>` boundary
+
+```tsx title="app/page.tsx" 
+import { Suspense } from 'react'
+import { ClientComponent } from './client'
+
+export default function Page() {
+  return (
+    <div>
+      <h1>Server-rendered content</h1>
+      <Suspense fallback={<div>Loading...</div>}>
+        <ClientComponent />
+      </Suspense>
+    </div>
+  )
+}
+```
+
+```tsx title="app/client.tsx"
+'use client'
+
+import { useQueryState } from 'nuqs'
+
+export function ClientComponent() {
+  const [foo, setFoo] = useQueryState('foo')
+  return <div>{foo}</div>
+}
+```
+
+</Accordion>
+
+## Framework-Specific Issues
+
+<Accordion title="Pages router returns null on SSR/SSG">
+
+Because the Next.js **pages router** is not available in an SSR context, hooks will
+always return `null` (or the default value if supplied) on SSR/SSG.
+
+**Solution:**
+
+This is a known limitation of the pages router. The app router does not have this limitation.
+
+If you need SSR support, consider:
+- Migrating to the app router
+- Using `getServerSideProps` to pass initial values
+- Accepting that initial render will use default values
+
+</Accordion>
+
+## Usage Caveats
+
+<Accordion title="Different parsers on the same key">
+
+Hooks are synced together on a per-key basis. Using different parsers on the same
+key can lead to unexpected states:
+
+```ts
+const [int] = useQueryState('foo', parseAsInteger)
+const [float, setFloat] = useQueryState('foo', parseAsFloat)
+
+setFloat(1.234)
+
+// Problem: `int` is now 1.234, instead of 1
+```
+
+**Solution:**
+
+Abstract a key/parser pair into a dedicated hook:
+
+```ts
+function useIntFloat() {
+  const [float, setFloat] = useQueryState('foo', parseAsFloat)
+  const int = Math.floor(float ?? 0)
+  return [{ int, float }, setFloat] as const
+}
+
+// Usage:
+const [{ int, float }, setValue] = useIntFloat()
+```
+
+</Accordion>
+
+<Accordion title="State not persisting across page navigations">
+
+If your query state is not persisting when navigating between pages:
+
+**Check:**
+
+1. Are you using the same query key on both pages?
+2. Is the adapter properly set up in your root layout/app?
+3. Are you using `shallow: false` when you should be using `shallow: true`?
+
+**Solution:**
+
+Ensure your adapter is in the root of your component tree:
+
+```tsx title="app/layout.tsx"
+import { NuqsAdapter } from 'nuqs/adapters/next/app'
+
+export default function RootLayout({ children }) {
+  return (
+    <html>
+      <body>
+        <NuqsAdapter>{children}</NuqsAdapter>
+      </body>
+    </html>
+  )
+}
+```
+
+</Accordion>
+
+## Debugging Tips
+
+<Accordion title="Enable debug logging">
+
+When troubleshooting issues, enable debug logging:
+
+**Browser:**
+```js
+localStorage.setItem('debug', 'nuqs')
+```
+
+**Server:**
+```bash
+DEBUG=nuqs pnpm dev
+```
+
+See the [Debugging guide](/advanced/debugging) for more details.
+
+</Accordion>
+
+<Accordion title="Check the browser console">
+
+Many issues will produce warnings or errors in the browser console.
+Always check the console when experiencing unexpected behavior.
+
+Look for:
+- `[nuqs]` or `[nuq+]` prefixed messages
+- React warnings about missing keys or invalid state
+- Network errors (when using `shallow: false`)
+
+</Accordion>
+
+## Getting Help
+
+If you're still experiencing issues:
+
+1. **Search existing issues**: Check [GitHub Issues](https://github.com/47ng/nuqs/issues) for similar problems
+2. **Enable debug logs**: Include debug output when reporting issues
+3. **Create a minimal reproduction**: Use [CodeSandbox](https://codesandbox.io) or [StackBlitz](https://stackblitz.com)
+4. **Open a new issue**: Provide:
+   - Environment details (framework, version, browser)
+   - Steps to reproduce
+   - Expected vs actual behavior
+   - Debug logs
+   - Minimal reproduction link
+
+<Note>
+Providing debug logs when opening an [issue](https://github.com/47ng/nuqs/issues)
+is always appreciated and helps resolve problems faster.
+</Note>

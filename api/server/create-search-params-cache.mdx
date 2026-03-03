@@ -1,0 +1,357 @@
+---
+title: 'createSearchParamsCache'
+description: 'API reference for the createSearchParamsCache function'
+---
+
+## Overview
+
+The `createSearchParamsCache` function creates a cache interface for accessing search parameters in deeply nested server components. It uses React's `cache` function to ensure parsed values are available throughout the server component tree for a single request.
+
+<Info>
+  The cache only works in **server components**. For client components, use `useQueryState` or `useQueryStates` hooks.
+</Info>
+
+## Function Signature
+
+```ts
+function createSearchParamsCache<Parsers extends ParserMap>(
+  parsers: Parsers,
+  options?: { urlKeys?: UrlKeys<Parsers> }
+): CacheInterface<Parsers>
+```
+
+## Parameters
+
+<ParamField path="parsers" type="ParserMap" required>
+  An object mapping search param keys to their parser configurations.
+  
+  ```ts
+  const parsers = {
+    q: parseAsString.withDefault(''),
+    page: parseAsInteger.withDefault(1),
+    category: parseAsString
+  }
+  ```
+</ParamField>
+
+<ParamField path="options" type="object">
+  Optional configuration object.
+  
+  <Expandable title="properties">
+    <ParamField path="urlKeys" type="UrlKeys<Parsers>">
+      Map internal state keys to different URL query parameter names.
+      
+      ```ts
+      type UrlKeys<Parsers> = Partial<Record<keyof Parsers, string>>
+      ```
+      
+      Example:
+      ```ts
+      const cache = createSearchParamsCache(
+        { query: parseAsString },
+        { urlKeys: { query: 'q' } }
+      )
+      ```
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+## Return Value
+
+Returns a `CacheInterface` with the following methods:
+
+```ts
+type CacheInterface<Parsers extends ParserMap> = {
+  parse: ParseFunction<Parsers>
+  all: () => inferParserType<Parsers>
+  get: <Key extends keyof Parsers>(key: Key) => inferParserType<Parsers[Key]>
+}
+```
+
+### parse()
+
+Parses the incoming search params and stores them in the cache for the current request.
+
+```ts
+type ParseFunction<Parsers extends ParserMap> = {
+  // Synchronous overload
+  (
+    searchParams: SearchParams,
+    loaderOptions?: LoaderFunctionOptions
+  ): inferParserType<Parsers>
+  
+  // Asynchronous overload (Next.js 15+)
+  (
+    searchParams: Promise<SearchParams>,
+    loaderOptions?: LoaderFunctionOptions
+  ): Promise<inferParserType<Parsers>>
+}
+```
+
+<ParamField path="searchParams" type="SearchParams | Promise<SearchParams>" required>
+  The `searchParams` prop from your page component. In Next.js 15+, this may be a Promise.
+  
+  ```ts
+  type SearchParams = Record<string, string | string[] | undefined>
+  ```
+</ParamField>
+
+<ParamField path="loaderOptions" type="LoaderFunctionOptions">
+  <Expandable title="properties">
+    <ParamField path="strict" type="boolean" default={false}>
+      When `true`, the loader will throw an error if a search params value is invalid for the given parser, rather than falling back to the parser's default value (or `null` if no default is set).
+      
+      ```ts
+      type LoaderFunctionOptions = {
+        strict?: boolean
+      }
+      ```
+    </ParamField>
+  </Expandable>
+</ParamField>
+
+<Warning>
+  You must call `parse()` in your page component before accessing values with `get()` or `all()` in nested components.
+</Warning>
+
+### get()
+
+Retrieves a single cached search param value by key.
+
+```ts
+get<Key extends keyof Parsers>(key: Key): inferParserType<Parsers[Key]>
+```
+
+<ParamField path="key" type="keyof Parsers" required>
+  The key of the search param to retrieve.
+  
+  ```ts
+  const page = searchParamsCache.get('page')
+  const query = searchParamsCache.get('q')
+  ```
+</ParamField>
+
+### all()
+
+Retrieves all cached search param values as an object.
+
+```ts
+all(): inferParserType<Parsers>
+```
+
+Returns an object containing all parsed search param values:
+
+```ts
+const { q, page, category } = searchParamsCache.all()
+```
+
+## Type Definitions
+
+### ParserMap
+
+```ts
+type ParserMap = Record<string, ParserWithOptionalDefault<any>>
+
+type ParserWithOptionalDefault<T> = GenericParserBuilder<T> & {
+  defaultValue?: T
+}
+```
+
+### inferParserType
+
+TypeScript automatically infers the return type based on your parsers:
+
+```ts
+const searchParamsCache = createSearchParamsCache({
+  count: parseAsInteger,                      // number | null
+  active: parseAsBoolean.withDefault(false),  // boolean
+  tags: parseAsArrayOf(parseAsString)         // string[] | null
+})
+
+const count = searchParamsCache.get('count')    // number | null
+const active = searchParamsCache.get('active')  // boolean
+const tags = searchParamsCache.get('tags')      // string[] | null
+
+const all = searchParamsCache.all()
+// {
+//   count: number | null,
+//   active: boolean,
+//   tags: string[] | null
+// }
+```
+
+## Examples
+
+### Basic Usage
+
+```tsx
+// searchParams.ts
+import { createSearchParamsCache, parseAsString, parseAsInteger } from 'nuqs/server'
+
+export const searchParamsCache = createSearchParamsCache({
+  q: parseAsString.withDefault(''),
+  page: parseAsInteger.withDefault(1),
+  category: parseAsString
+})
+
+// page.tsx
+import { searchParamsCache } from './searchParams'
+
+export default async function Page({ searchParams }) {
+  const { q } = await searchParamsCache.parse(searchParams)
+  
+  return (
+    <div>
+      <h1>Search: {q}</h1>
+      <Results />  {/* Can access cached params */}
+    </div>
+  )
+}
+
+// Results.tsx (nested server component)
+import { searchParamsCache } from './searchParams'
+
+export function Results() {
+  const page = searchParamsCache.get('page')
+  const category = searchParamsCache.get('category')
+  
+  return <div>Page {page} - Category: {category || 'All'}</div>
+}
+```
+
+### Next.js 15 Async searchParams
+
+```tsx
+// Next.js 14 and earlier (synchronous)
+export default function Page({ searchParams }) {
+  const { q } = searchParamsCache.parse(searchParams)
+  return <div>Search: {q}</div>
+}
+
+// Next.js 15+ (asynchronous)
+export default async function Page({ searchParams }) {
+  const { q } = await searchParamsCache.parse(searchParams)
+  return <div>Search: {q}</div>
+}
+```
+
+### Strict Mode
+
+```tsx
+export default async function Page({ searchParams }) {
+  try {
+    // Throws if any parser fails
+    const params = await searchParamsCache.parse(searchParams, { strict: true })
+  } catch (error) {
+    console.error('Invalid search params:', error)
+    notFound()
+  }
+}
+```
+
+### URL Keys Mapping
+
+```tsx
+const searchParamsCache = createSearchParamsCache(
+  {
+    searchQuery: parseAsString,
+    pageNumber: parseAsInteger.withDefault(1)
+  },
+  {
+    urlKeys: {
+      searchQuery: 'q',
+      pageNumber: 'page'
+    }
+  }
+)
+
+// URL: ?q=laptop&page=2
+// Access via internal names:
+const searchQuery = searchParamsCache.get('searchQuery')  // "laptop"
+const pageNumber = searchParamsCache.get('pageNumber')    // 2
+```
+
+### Using all()
+
+```tsx
+import { searchParamsCache } from './searchParams'
+
+export async function SearchResults() {
+  // Access all values at once
+  const { q, tags, sortBy } = searchParamsCache.all()
+  
+  const results = await searchDatabase(q, tags, sortBy)
+  
+  return (
+    <ul>
+      {results.map(result => (
+        <li key={result.id}>{result.title}</li>
+      ))}
+    </ul>
+  )
+}
+```
+
+## Cache Lifecycle
+
+The cache is scoped to a single page render using React's [`cache`](https://react.dev/reference/react/cache) function:
+
+- **Created** when the page component renders
+- **Shared** across all server components in the tree for that request
+- **Cleared** after the request completes
+- **Isolated** between different requests (no cross-request pollution)
+
+```tsx
+// Each request gets its own cache instance
+Request 1: ?q=foo&page=1  →  Cache { q: 'foo', page: 1 }
+Request 2: ?q=bar&page=2  →  Cache { q: 'bar', page: 2 }
+```
+
+## Error Handling
+
+The cache will throw an error if you try to access values before calling `parse()`:
+
+```tsx
+// ❌ Will throw error
+export default function Page({ searchParams }) {
+  // parse() not called yet!
+  const page = searchParamsCache.get('page')
+  // Error: [nuqs] Cannot access search params before calling parse()
+}
+
+// ✅ Correct usage
+export default async function Page({ searchParams }) {
+  await searchParamsCache.parse(searchParams)
+  const page = searchParamsCache.get('page')  // Works!
+}
+```
+
+The cache will also throw if you call `parse()` multiple times with different inputs in the same request:
+
+```tsx
+export default async function Page({ searchParams }) {
+  await searchParamsCache.parse(searchParams)
+  
+  // ❌ Will throw error if searchParams changed
+  await searchParamsCache.parse(differentSearchParams)
+  // Error: Cannot call parse() with different inputs in the same request
+}
+```
+
+<Info>
+  If `parse()` is called multiple times with the **same** input (e.g., in both `generateMetadata` and the page component), the cached result is safely returned.
+</Info>
+
+## Related
+
+<CardGroup cols={2}>
+  <Card title="Cache Guide" icon="database" href="/server/cache">
+    Learn how to use the cache in server components
+  </Card>
+  <Card title="createLoader" icon="download" href="/api/server/create-loader">
+    One-off parsing with createLoader
+  </Card>
+  <Card title="Parsers" icon="code" href="/concepts/parsers">
+    Learn about available parser types
+  </Card>
+</CardGroup>

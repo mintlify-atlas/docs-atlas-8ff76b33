@@ -1,0 +1,174 @@
+---
+title: 'Server-Side Rendering Overview'
+description: 'Using nuqs in server components and server-side contexts with the nuqs/server import'
+---
+
+## Introduction
+
+The `nuqs/server` package provides server-side utilities for parsing and working with URL search parameters in server components, loaders, and API routes. Unlike the main `nuqs` package which is designed for client-side React components, `nuqs/server` has no client-side dependencies and can be safely imported in server contexts.
+
+## Import from nuqs/server
+
+When working in server-side contexts, always import from `nuqs/server` to avoid bundling client-side code:
+
+```ts
+import {
+  createSearchParamsCache,
+  createLoader,
+  createSerializer,
+  parseAsString,
+  parseAsInteger,
+  parseAsFloat,
+  parseAsBoolean
+  // ... other parsers
+} from 'nuqs/server'
+```
+
+<Warning>
+  Do not import from `nuqs` in server components or server-side code, as it includes the `"use client"` directive and client-side dependencies.
+</Warning>
+
+## Available Server Exports
+
+The `nuqs/server` package exports:
+
+- **`createSearchParamsCache`** - For accessing search params in nested server components
+- **`createLoader`** - For parsing search params in loaders, API routes, and one-off operations
+- **`createSerializer`** - For generating URLs with search params (e.g., for `<Link>` components)
+- **All parsers** - `parseAsString`, `parseAsInteger`, `parseAsFloat`, `parseAsBoolean`, `parseAsTimestamp`, `parseAsIsoDateTime`, `parseAsArrayOf`, `parseAsJson`, `parseAsStringEnum`, `parseAsStringLiteral`, `parseAsNumberLiteral`, etc.
+- **Type utilities** - `inferParserType`, `UrlKeys`, `SearchParams`, `Options`, etc.
+- **Rate limiting utilities** - `debounce`, `throttle`, `defaultRateLimit`
+
+## Server-Side Use Cases
+
+### Next.js App Router
+
+In Next.js app router pages and server components:
+
+```tsx
+import { createSearchParamsCache, parseAsString, parseAsInteger } from 'nuqs/server'
+
+const searchParamsCache = createSearchParamsCache({
+  q: parseAsString.withDefault(''),
+  page: parseAsInteger.withDefault(1)
+})
+
+export default async function Page({ searchParams }) {
+  const { q, page } = await searchParamsCache.parse(searchParams)
+  // Use parsed values...
+  return <div>Search: {q}, Page: {page}</div>
+}
+```
+
+### Remix Loaders
+
+```tsx
+import { createLoader, parseAsString } from 'nuqs/server'
+
+const searchParams = {
+  q: parseAsString,
+  page: parseAsInteger.withDefault(1)
+}
+
+const loadSearchParams = createLoader(searchParams)
+
+export async function loader({ request }: LoaderFunctionArgs) {
+  const { q, page } = loadSearchParams(request)
+  // Fetch data based on parsed params...
+  return json({ results, q, page })
+}
+```
+
+### React Router Loaders
+
+```tsx
+import { createLoader, parseAsString } from 'nuqs/server'
+
+const loadSearchParams = createLoader({
+  filter: parseAsString,
+  sort: parseAsString.withDefault('name')
+})
+
+export async function loader({ request }) {
+  const { filter, sort } = loadSearchParams(request)
+  return { items: await fetchItems(filter, sort) }
+}
+```
+
+### API Routes
+
+```tsx
+import { createLoader, parseAsInteger } from 'nuqs/server'
+
+const loadSearchParams = createLoader({
+  limit: parseAsInteger.withDefault(10),
+  offset: parseAsInteger.withDefault(0)
+})
+
+export async function GET(request: Request) {
+  const { limit, offset } = loadSearchParams(request)
+  const data = await fetchData({ limit, offset })
+  return Response.json(data)
+}
+```
+
+## Type Safety
+
+All server-side utilities maintain full type safety. TypeScript will correctly infer the types of parsed values based on the parsers you provide:
+
+```tsx
+import { createLoader, parseAsInteger, parseAsBoolean } from 'nuqs/server'
+
+const loadSearchParams = createLoader({
+  count: parseAsInteger,           // number | null
+  active: parseAsBoolean.withDefault(false)  // boolean
+})
+
+const params = loadSearchParams(request)
+// params.count has type: number | null
+// params.active has type: boolean
+```
+
+## Sharing Parser Configurations
+
+You can share parser configurations between client and server code:
+
+```tsx
+// searchParams.ts
+import { parseAsString, parseAsInteger } from 'nuqs/server'
+
+export const filterParsers = {
+  query: parseAsString.withDefault(''),
+  page: parseAsInteger.withDefault(1),
+  limit: parseAsInteger.withDefault(20)
+}
+
+// server.tsx (Server Component)
+import { createSearchParamsCache } from 'nuqs/server'
+import { filterParsers } from './searchParams'
+
+const searchParamsCache = createSearchParamsCache(filterParsers)
+
+// client.tsx (Client Component)
+import { useQueryStates } from 'nuqs'
+import { filterParsers } from './searchParams'
+
+export function Filters() {
+  const [filters, setFilters] = useQueryStates(filterParsers)
+  // ...
+}
+```
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Loaders" icon="download" href="/server/loaders">
+    Learn about createLoader for one-off parsing
+  </Card>
+  <Card title="Cache" icon="database" href="/server/cache">
+    Use createSearchParamsCache for server components
+  </Card>
+  <Card title="Serializer" icon="link" href="/server/serializer">
+    Generate URLs with createSerializer
+  </Card>
+</CardGroup>

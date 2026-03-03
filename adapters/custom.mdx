@@ -1,0 +1,407 @@
+---
+title: Custom Adapter
+description: Create your own nuqs adapter for custom routing solutions
+---
+
+If you're using a framework or routing solution that doesn't have a built-in nuqs adapter, you can create your own custom adapter using the unstable adapter API.
+
+<Warning>
+  The custom adapter API is marked as **unstable** and may change in future versions. Use the `unstable_` prefix when importing types and functions.
+</Warning>
+
+## Prerequisites
+
+Before creating a custom adapter, ensure:
+
+1. Your framework provides access to URL search parameters
+2. Your framework has a way to programmatically update the URL
+3. You can detect when the URL changes (for synchronization)
+
+## Installation
+
+First, install nuqs:
+
+```bash
+npm install nuqs
+```
+
+```bash
+pnpm add nuqs
+```
+
+```bash
+yarn add nuqs
+```
+
+## Creating a Custom Adapter
+
+### Step 1: Import the Adapter Utilities
+
+Import the necessary types and functions from `nuqs/adapters/custom`:
+
+```tsx
+import {
+  unstable_createAdapterProvider,
+  type unstable_AdapterInterface,
+  type unstable_AdapterOptions,
+  renderQueryString
+} from 'nuqs/adapters/custom'
+```
+
+### Step 2: Define Your Adapter Hook
+
+Create a hook that implements the `unstable_AdapterInterface`:
+
+```tsx
+function useMyCustomAdapter(watchKeys: string[]): unstable_AdapterInterface {
+  // 1. Get current search params from your router
+  const searchParams = useMemo(() => {
+    // Return URLSearchParams object with current search params
+    // filtered by watchKeys if your router supports it
+    return new URLSearchParams(/* ... */)
+  }, [/* dependencies */])
+
+  // 2. Create an update function
+  const updateUrl = useCallback(
+    (search: URLSearchParams, options: unstable_AdapterOptions) => {
+      // Convert search params to string
+      const queryString = renderQueryString(search)
+      
+      // Update your router's URL
+      // Use options.history ('push' | 'replace') to determine the navigation method
+      // Use options.scroll (boolean) to control scroll behavior
+      // Use options.shallow (boolean) for framework-specific shallow updates
+      
+      if (options.history === 'push') {
+        // Push new history entry
+      } else {
+        // Replace current history entry
+      }
+      
+      if (options.scroll) {
+        window.scrollTo({ top: 0 })
+      }
+    },
+    [/* dependencies */]
+  )
+
+  return {
+    searchParams,
+    updateUrl
+  }
+}
+```
+
+### Step 3: Create the Adapter Provider
+
+Use `unstable_createAdapterProvider` to create your adapter component:
+
+```tsx
+export const MyCustomAdapter = unstable_createAdapterProvider(
+  useMyCustomAdapter
+)
+```
+
+### Step 4: Use Your Adapter
+
+Wrap your application with your custom adapter:
+
+```tsx
+import { MyCustomAdapter } from './my-custom-adapter'
+
+function App() {
+  return (
+    <MyCustomAdapter>
+      {/* Your app components */}
+    </MyCustomAdapter>
+  )
+}
+```
+
+## Complete Example
+
+Here's a complete example of a custom adapter for a hypothetical router:
+
+```tsx title="my-custom-adapter.tsx"
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import {
+  unstable_createAdapterProvider,
+  type unstable_AdapterInterface,
+  type unstable_AdapterOptions,
+  renderQueryString
+} from 'nuqs/adapters/custom'
+import { useMyRouter, useMyRouterSearchParams } from './my-router'
+
+function useMyCustomAdapter(watchKeys: string[]): unstable_AdapterInterface {
+  // Get router instance
+  const router = useMyRouter()
+  
+  // Get current search params from your router
+  const routerSearchParams = useMyRouterSearchParams()
+  
+  // Filter to only watched keys
+  const searchParams = useMemo(() => {
+    const params = new URLSearchParams()
+    for (const key of watchKeys) {
+      const value = routerSearchParams.get(key)
+      if (value !== null) {
+        params.set(key, value)
+      }
+    }
+    return params
+  }, [routerSearchParams, watchKeys.join(',')])
+
+  // Create update function
+  const updateUrl = useCallback(
+    (search: URLSearchParams, options: unstable_AdapterOptions) => {
+      const queryString = renderQueryString(search)
+      const newUrl = window.location.pathname + queryString + window.location.hash
+      
+      if (options.history === 'push') {
+        router.push(newUrl, { scroll: options.scroll })
+      } else {
+        router.replace(newUrl, { scroll: options.scroll })
+      }
+    },
+    [router]
+  )
+
+  return {
+    searchParams,
+    updateUrl
+  }
+}
+
+export const MyCustomAdapter = unstable_createAdapterProvider(
+  useMyCustomAdapter
+)
+```
+
+## Advanced: Optimistic Updates
+
+For better UX, you can implement optimistic updates using `useOptimistic` or local state:
+
+```tsx
+import { useOptimistic } from 'react'
+
+function useMyCustomAdapter(watchKeys: string[]): unstable_AdapterInterface {
+  const routerSearchParams = useMyRouterSearchParams()
+  const router = useMyRouter()
+  
+  const [optimisticSearchParams, setOptimisticSearchParams] = 
+    useOptimistic<URLSearchParams>(routerSearchParams)
+
+  const updateUrl = useCallback(
+    (search: URLSearchParams, options: unstable_AdapterOptions) => {
+      // Update optimistically
+      setOptimisticSearchParams(search)
+      
+      // Then update the router
+      const queryString = renderQueryString(search)
+      const newUrl = window.location.pathname + queryString
+      
+      if (options.history === 'push') {
+        router.push(newUrl)
+      } else {
+        router.replace(newUrl)
+      }
+    },
+    [router, setOptimisticSearchParams]
+  )
+
+  return {
+    searchParams: optimisticSearchParams,
+    updateUrl
+  }
+}
+```
+
+## Advanced: Rate Limiting
+
+If your router has different rate limiting characteristics, you can specify a `rateLimitFactor`:
+
+```tsx
+function useMyCustomAdapter(watchKeys: string[]): unstable_AdapterInterface {
+  // ... implementation ...
+  
+  return {
+    searchParams,
+    updateUrl,
+    rateLimitFactor: 2 // Double the default throttle time
+  }
+}
+```
+
+## Advanced: Auto Queue Reset
+
+Some routers need automatic queue resets on navigation. Set `autoResetQueueOnUpdate`:
+
+```tsx
+function useMyCustomAdapter(watchKeys: string[]): unstable_AdapterInterface {
+  // ... implementation ...
+  
+  return {
+    searchParams,
+    updateUrl,
+    autoResetQueueOnUpdate: true
+  }
+}
+```
+
+## Interface Reference
+
+### `unstable_AdapterInterface`
+
+```typescript
+interface unstable_AdapterInterface {
+  searchParams: URLSearchParams
+  updateUrl: (search: URLSearchParams, options: unstable_AdapterOptions) => void
+  rateLimitFactor?: number
+  autoResetQueueOnUpdate?: boolean
+}
+```
+
+### `unstable_AdapterOptions`
+
+```typescript
+interface unstable_AdapterOptions {
+  history: 'push' | 'replace'
+  scroll: boolean
+  shallow: boolean
+  throttleMs?: number
+}
+```
+
+### `unstable_UseAdapterHook`
+
+```typescript
+type unstable_UseAdapterHook = (
+  watchKeys: string[]
+) => unstable_AdapterInterface
+```
+
+### `renderQueryString`
+
+Utility function to render URLSearchParams as a query string:
+
+```typescript
+function renderQueryString(search: URLSearchParams): string
+// Returns: '?key=value&other=value2' or '' if empty
+```
+
+## Examples from Built-in Adapters
+
+### React Router Based Adapter Pattern
+
+Many routers share similar patterns. Here's a simplified version of how nuqs creates React Router adapters:
+
+```tsx
+import { useCallback, useMemo } from 'react'
+import {
+  unstable_createAdapterProvider,
+  type unstable_AdapterInterface,
+  renderQueryString
+} from 'nuqs/adapters/custom'
+
+function createReactRouterBasedAdapter({
+  useNavigate,
+  useSearchParams
+}: {
+  useNavigate: () => any
+  useSearchParams: () => [URLSearchParams, any]
+}) {
+  function useAdapter(watchKeys: string[]): unstable_AdapterInterface {
+    const navigate = useNavigate()
+    const [searchParams] = useSearchParams()
+
+    const filteredSearchParams = useMemo(() => {
+      const filtered = new URLSearchParams()
+      for (const key of watchKeys) {
+        const value = searchParams.get(key)
+        if (value !== null) {
+          filtered.set(key, value)
+        }
+      }
+      return filtered
+    }, [searchParams, watchKeys.join(',')])
+
+    const updateUrl = useCallback(
+      (search: URLSearchParams, options: unstable_AdapterOptions) => {
+        const queryString = renderQueryString(search)
+        navigate(
+          window.location.pathname + queryString + window.location.hash,
+          {
+            replace: options.history === 'replace',
+            // ... other options
+          }
+        )
+      },
+      [navigate]
+    )
+
+    return {
+      searchParams: filteredSearchParams,
+      updateUrl
+    }
+  }
+
+  return unstable_createAdapterProvider(useAdapter)
+}
+```
+
+## Testing Your Custom Adapter
+
+You can use nuqs's testing adapter as a reference:
+
+```tsx
+import { NuqsTestingAdapter } from 'nuqs/adapters/testing'
+import { render, screen } from '@testing-library/react'
+import { useQueryState } from 'nuqs'
+
+function TestComponent() {
+  const [value, setValue] = useQueryState('test')
+  return <div>{value}</div>
+}
+
+test('custom adapter', () => {
+  render(
+    <NuqsTestingAdapter searchParams="?test=hello">
+      <TestComponent />
+    </NuqsTestingAdapter>
+  )
+  
+  expect(screen.getByText('hello')).toBeInTheDocument()
+})
+```
+
+## Troubleshooting
+
+### Type errors with unstable API
+
+The unstable API requires using the `unstable_` prefix. Make sure you're importing correctly:
+
+```tsx
+// ✅ Correct
+import { unstable_createAdapterProvider } from 'nuqs/adapters/custom'
+
+// ❌ Wrong
+import { createAdapterProvider } from 'nuqs/adapters/custom'
+```
+
+### Infinite re-render loops
+
+Make sure:
+1. Your `searchParams` are properly memoized
+2. Your `updateUrl` function is wrapped in `useCallback`
+3. Dependencies are correctly specified
+
+### Search params not syncing
+
+Ensure:
+1. You're filtering `searchParams` by `watchKeys`
+2. Your router's search params changes trigger re-renders
+3. The `updateUrl` function correctly updates your router
+
+## Contributing Your Adapter
+
+If you create an adapter for a popular framework, consider contributing it to nuqs! Open a pull request on the [nuqs GitHub repository](https://github.com/47ng/nuqs).

@@ -1,0 +1,364 @@
+---
+title: TanStack Router Adapter
+description: Setup and configure nuqs for TanStack Router applications
+---
+
+The TanStack Router adapter enables nuqs to work with TanStack Router v1 applications.
+
+<Note>
+  TanStack Router support is experimental and does not yet cover TanStack Start (the SSR framework).
+</Note>
+
+## Installation
+
+<Steps>
+  <Step title="Install nuqs">
+    Install nuqs in your TanStack Router project:
+
+    ```bash
+    npm install nuqs
+    ```
+
+    ```bash
+    pnpm add nuqs
+    ```
+
+    ```bash
+    yarn add nuqs
+    ```
+  </Step>
+
+  <Step title="Add the adapter to your root route">
+    Wrap your app with `NuqsAdapter` in your root route component:
+
+    ```tsx title="src/routes/__root.tsx"
+    import { NuqsAdapter } from 'nuqs/adapters/tanstack-router'
+import { Outlet, createRootRoute } from '@tanstack/react-router'
+
+export const Route = createRootRoute({
+  component: () => (
+    <>
+      <NuqsAdapter>
+        <div>
+          <nav>{/* Your navigation */}</nav>
+          <Outlet />
+        </div>
+      </NuqsAdapter>
+    </>
+  )
+})
+    ```
+
+    <Note>
+      The `NuqsAdapter` should wrap the `<Outlet />` component to provide context to all routes.
+    </Note>
+  </Step>
+
+  <Step title="Use nuqs hooks in your route components">
+    Now you can use `useQueryState` and `useQueryStates` in any route component:
+
+    ```tsx title="src/routes/search.tsx"
+    import { useQueryState } from 'nuqs'
+import { createFileRoute } from '@tanstack/react-router'
+
+export const Route = createFileRoute('/search')({
+  component: SearchComponent
+})
+
+function SearchComponent() {
+  const [search, setSearch] = useQueryState('q')
+
+  return (
+    <div>
+      <input
+        value={search || ''}
+        onChange={(e) => setSearch(e.target.value)}
+        placeholder="Search..."
+      />
+      <p>Search query: {search || 'none'}</p>
+    </div>
+  )
+}
+    ```
+  </Step>
+</Steps>
+
+## Version Requirements
+
+- **@tanstack/react-router**: `^1`
+- **React**: `>=18.2.0` or `^19.0.0-0`
+
+## Features
+
+### Integration with TanStack Router
+
+The adapter uses TanStack Router's native `useLocation()` and `useRouter()` hooks, ensuring seamless integration with TanStack Router's navigation system.
+
+### Automatic Type Handling
+
+TanStack Router JSON-parses objects in search params by default. The nuqs adapter automatically handles this:
+
+```tsx
+import { useQueryState, parseAsJson } from 'nuqs'
+
+type Point = { x: number; y: number }
+
+function Component() {
+  const [point, setPoint] = useQueryState('point', parseAsJson<Point>())
+  
+  // The adapter re-stringifies objects for parseAsJson to work correctly
+}
+```
+
+### Navigation Options
+
+The adapter respects nuqs history and scroll options:
+
+```tsx
+const [state, setState] = useQueryState('key', {
+  history: 'push',  // Creates new history entry (default: 'replace')
+  scroll: true      // Resets scroll position
+})
+```
+
+These map to TanStack Router's `replace` and `resetScroll` options.
+
+### Optimized Performance
+
+The adapter has a `rateLimitFactor` of 1, meaning it's optimized for TanStack Router's navigation performance characteristics.
+
+## How It Works
+
+The TanStack Router adapter:
+
+1. Uses `useLocation()` to read search params from the route state
+2. Filters and watches only the keys used by nuqs hooks
+3. Converts TanStack Router's search object format to `URLSearchParams`
+4. Uses `navigate()` to update the URL with custom encoding
+5. Wraps navigation in `startTransition` for scroll restoration support
+6. Handles TanStack Router's object serialization automatically
+
+## Examples
+
+### Search with Results
+
+```tsx title="src/routes/search.tsx"
+import { useQueryState, parseAsString } from 'nuqs'
+import { createFileRoute } from '@tanstack/react-router'
+
+export const Route = createFileRoute('/search')({
+  component: SearchRoute
+})
+
+function SearchRoute() {
+  const [query, setQuery] = useQueryState('q', parseAsString)
+  const [results, setResults] = useState([])
+
+  useEffect(() => {
+    if (query) {
+      fetchResults(query).then(setResults)
+    } else {
+      setResults([])
+    }
+  }, [query])
+
+  return (
+    <div>
+      <input
+        value={query || ''}
+        onChange={(e) => setQuery(e.target.value)}
+        placeholder="Search..."
+      />
+      <div>
+        {results.map((result) => (
+          <div key={result.id}>{result.name}</div>
+        ))}
+      </div>
+    </div>
+  )
+}
+```
+
+### Filters with Multiple States
+
+```tsx title="src/routes/products.tsx"
+import { useQueryStates, parseAsString, parseAsInteger } from 'nuqs'
+import { createFileRoute } from '@tanstack/react-router'
+
+export const Route = createFileRoute('/products')({
+  component: ProductsRoute
+})
+
+function ProductsRoute() {
+  const [filters, setFilters] = useQueryStates({
+    category: parseAsString,
+    minPrice: parseAsInteger,
+    maxPrice: parseAsInteger,
+    search: parseAsString
+  })
+
+  return (
+    <div>
+      <input
+        value={filters.search || ''}
+        onChange={(e) => setFilters({ search: e.target.value || null })}
+        placeholder="Search products..."
+      />
+      
+      <select
+        value={filters.category || ''}
+        onChange={(e) => setFilters({ category: e.target.value || null })}
+      >
+        <option value="">All Categories</option>
+        <option value="electronics">Electronics</option>
+        <option value="clothing">Clothing</option>
+      </select>
+      
+      <div>
+        <input
+          type="number"
+          value={filters.minPrice || ''}
+          onChange={(e) => setFilters({ minPrice: parseInt(e.target.value) || null })}
+          placeholder="Min price"
+        />
+        <input
+          type="number"
+          value={filters.maxPrice || ''}
+          onChange={(e) => setFilters({ maxPrice: parseInt(e.target.value) || null })}
+          placeholder="Max price"
+        />
+      </div>
+      
+      <button onClick={() => setFilters({
+        category: null,
+        minPrice: null,
+        maxPrice: null,
+        search: null
+      })}>
+        Clear Filters
+      </button>
+    </div>
+  )
+}
+```
+
+### Pagination with History
+
+```tsx title="src/routes/blog.tsx"
+import { useQueryState, parseAsInteger } from 'nuqs'
+import { createFileRoute } from '@tanstack/react-router'
+
+export const Route = createFileRoute('/blog')({
+  component: BlogRoute
+})
+
+function BlogRoute() {
+  const [page, setPage] = useQueryState(
+    'page',
+    parseAsInteger.withDefault(1).withOptions({
+      history: 'push' // Each page change creates a history entry
+    })
+  )
+
+  return (
+    <div>
+      <h1>Blog Posts - Page {page}</h1>
+      <div>{/* Render posts for current page */}</div>
+      <div>
+        <button
+          onClick={() => setPage(page - 1)}
+          disabled={page <= 1}
+        >
+          Previous
+        </button>
+        <span>Page {page}</span>
+        <button onClick={() => setPage(page + 1)}>
+          Next
+        </button>
+      </div>
+    </div>
+  )
+}
+```
+
+## Working with TanStack Router Search Params
+
+### Mixing nuqs with TanStack Router's Search Params
+
+You can use nuqs alongside TanStack Router's built-in search param validation:
+
+```tsx title="src/routes/products.tsx"
+import { createFileRoute } from '@tanstack/react-router'
+import { useQueryState, parseAsString } from 'nuqs'
+import { z } from 'zod'
+
+// TanStack Router validation schema
+const productSearchSchema = z.object({
+  category: z.string().optional(),
+  page: z.number().optional()
+})
+
+export const Route = createFileRoute('/products')({
+  validateSearch: productSearchSchema,
+  component: ProductsRoute
+})
+
+function ProductsRoute() {
+  // Use TanStack Router's validated search params
+  const routerSearch = Route.useSearch()
+  
+  // Use nuqs for additional client-side state
+  const [view, setView] = useQueryState('view', parseAsString)
+  
+  return (
+    <div>
+      <p>Category: {routerSearch.category}</p>
+      <p>View mode: {view}</p>
+      {/* ... */}
+    </div>
+  )
+}
+```
+
+## Limitations
+
+### TanStack Start (SSR) Not Supported
+
+The current adapter is designed for client-side TanStack Router applications. Support for TanStack Start (the SSR framework) is not yet available.
+
+### JSON Object Handling
+
+TanStack Router automatically JSON-parses objects in search params. When using `parseAsJson`, the adapter re-stringifies these objects to ensure compatibility. This adds a small overhead but maintains consistency with other nuqs adapters.
+
+## Troubleshooting
+
+### Search params not updating
+
+Ensure:
+1. The `NuqsAdapter` is placed in your root route and wraps `<Outlet />`
+2. Your route components are properly nested under the root route
+3. You're using TanStack Router v1 or later
+
+### Type errors with search params
+
+If you're using TanStack Router's search param validation and getting type conflicts:
+
+```tsx
+// Use separate state for TanStack Router validated params
+const routerSearch = Route.useSearch()
+
+// And nuqs for additional client-side state
+const [clientState, setClientState] = useQueryState('client-key')
+```
+
+### Adapter not found error
+
+Make sure you're importing from the correct path:
+
+```tsx
+// ✅ Correct
+import { NuqsAdapter } from 'nuqs/adapters/tanstack-router'
+
+// ❌ Wrong
+import { NuqsAdapter } from 'nuqs/adapters/react'
+```

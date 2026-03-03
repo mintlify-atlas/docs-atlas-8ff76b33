@@ -1,0 +1,804 @@
+---
+title: "Built-in Parsers"
+description: "Complete reference for all built-in parser implementations in nuqs"
+---
+
+All built-in parsers are exported from the main `nuqs` package and implement the `SingleParserBuilder` interface, providing access to `.withDefault()` and `.withOptions()` methods.
+
+## String Parsers
+
+### parseAsString
+
+Parses and serializes string values (identity parser).
+
+```typescript
+export const parseAsString: SingleParserBuilder<string>
+```
+
+**Implementation:**
+```typescript
+export const parseAsString: SingleParserBuilder<string> = createParser({
+  parse: v => v,
+  serialize: String
+})
+```
+
+**From:** `packages/nuqs/src/parsers.ts:230-233`
+
+**Usage:**
+```typescript
+import { useQueryState, parseAsString } from 'nuqs'
+
+const [search, setSearch] = useQueryState('q', parseAsString)
+// URL: ?q=hello
+// State: 'hello'
+
+const [name, setName] = useQueryState('name', parseAsString.withDefault('Anonymous'))
+// URL: (no query)
+// State: 'Anonymous'
+```
+
+**Behavior:**
+- **Parse:** Returns the input string as-is
+- **Serialize:** Converts value to string using `String()`
+- **Invalid input:** Never returns `null` (all strings are valid)
+
+---
+
+## Number Parsers
+
+### parseAsInteger
+
+Parses integers and serializes with rounding.
+
+```typescript
+export const parseAsInteger: SingleParserBuilder<number>
+```
+
+**Implementation:**
+```typescript
+export const parseAsInteger: SingleParserBuilder<number> = createParser({
+  parse: v => {
+    const int = parseInt(v)
+    return int == int ? int : null // NaN check at low bundle size cost
+  },
+  serialize: v => '' + Math.round(v)
+})
+```
+
+**From:** `packages/nuqs/src/parsers.ts:235-241`
+
+**Usage:**
+```typescript
+const [page, setPage] = useQueryState('page', parseAsInteger.withDefault(1))
+// URL: ?page=5
+// State: 5
+
+setPage(3.14) 
+// URL: ?page=3 (rounded)
+```
+
+**Behavior:**
+- **Parse:** Uses `parseInt()`, returns `null` for NaN
+- **Serialize:** Rounds to nearest integer with `Math.round()`
+- **Invalid input:** `''`, `'abc'`, `'3.14.15'` → `null`
+
+---
+
+### parseAsFloat
+
+Parses floating-point numbers with full precision.
+
+```typescript
+export const parseAsFloat: SingleParserBuilder<number>
+```
+
+**Implementation:**
+```typescript
+export const parseAsFloat: SingleParserBuilder<number> = createParser({
+  parse: v => {
+    const float = parseFloat(v)
+    return float == float ? float : null // NaN check at low bundle size cost
+  },
+  serialize: String
+})
+```
+
+**From:** `packages/nuqs/src/parsers.ts:262-268`
+
+**Usage:**
+```typescript
+const [price, setPrice] = useQueryState('price', parseAsFloat)
+// URL: ?price=19.99
+// State: 19.99
+
+setPrice(0.1 + 0.2)
+// URL: ?price=0.30000000000000004
+// State: 0.30000000000000004
+```
+
+**Behavior:**
+- **Parse:** Uses `parseFloat()`, returns `null` for NaN
+- **Serialize:** Uses `String()` to preserve precision
+- **Invalid input:** `''`, `'abc'` → `null`
+
+---
+
+### parseAsHex
+
+Parses hexadecimal numbers.
+
+```typescript
+export const parseAsHex: SingleParserBuilder<number>
+```
+
+**Implementation:**
+```typescript
+export const parseAsHex: SingleParserBuilder<number> = createParser({
+  parse: v => {
+    const int = parseInt(v, 16)
+    return int == int ? int : null // NaN check at low bundle size cost
+  },
+  serialize: v => {
+    const hex = Math.round(v).toString(16)
+    return (hex.length & 1 ? '0' : '') + hex
+  }
+})
+```
+
+**From:** `packages/nuqs/src/parsers.ts:251-260`
+
+**Usage:**
+```typescript
+const [color, setColor] = useQueryState('color', parseAsHex)
+// URL: ?color=ff00cc
+// State: 16711884
+
+setColor(0xff)
+// URL: ?color=0ff (zero-padded to even length)
+```
+
+**Behavior:**
+- **Parse:** Uses `parseInt(v, 16)` for hexadecimal conversion
+- **Serialize:** Converts to hex string, zero-pads to even length
+- **Invalid input:** `''`, `'xyz'` → `null`
+
+---
+
+### parseAsIndex
+
+Parses 1-based indices and stores them as 0-based.
+
+```typescript
+export const parseAsIndex: SingleParserBuilder<number>
+```
+
+**Implementation:**
+```typescript
+export const parseAsIndex: SingleParserBuilder<number> = createParser({
+  parse: v => {
+    const int = parseInt(v)
+    return int == int ? int - 1 : null // NaN check at low bundle size cost
+  },
+  serialize: v => '' + Math.round(v + 1)
+})
+```
+
+**From:** `packages/nuqs/src/parsers.ts:243-249`
+
+**Usage:**
+```typescript
+const [tabIndex, setTabIndex] = useQueryState('tab', parseAsIndex.withDefault(0))
+// URL: ?tab=1
+// State: 0 (0-based index)
+
+setTabIndex(2)
+// URL: ?tab=3 (1-based in URL)
+```
+
+**Behavior:**
+- **Parse:** Subtracts 1 to convert from 1-based to 0-based
+- **Serialize:** Adds 1 to convert from 0-based to 1-based, rounds
+- **Use case:** User-facing page numbers, tab indices
+
+---
+
+## Boolean Parser
+
+### parseAsBoolean
+
+Parses boolean values (case-insensitive `'true'` only).
+
+```typescript
+export const parseAsBoolean: SingleParserBuilder<boolean>
+```
+
+**Implementation:**
+```typescript
+export const parseAsBoolean: SingleParserBuilder<boolean> = createParser({
+  parse: v => v.toLowerCase() === 'true',
+  serialize: String
+})
+```
+
+**From:** `packages/nuqs/src/parsers.ts:270-273`
+
+**Usage:**
+```typescript
+const [darkMode, setDarkMode] = useQueryState('dark', parseAsBoolean)
+// URL: ?dark=true
+// State: true
+
+// URL: ?dark=false
+// State: false
+
+// URL: ?dark=1
+// State: false (only 'true' is truthy)
+```
+
+**Behavior:**
+- **Parse:** Returns `true` only for `'true'` (case-insensitive), otherwise `false`
+- **Serialize:** Uses `String()` to produce `'true'` or `'false'`
+- **Invalid input:** All input is valid - non-`'true'` values return `false`
+- **Note:** `'yes'`, `'1'`, `'on'` all parse as `false`
+
+---
+
+## Date & Time Parsers
+
+All date parsers use a custom equality function:
+
+```typescript
+function compareDates(a: Date, b: Date) {
+  return a.valueOf() === b.valueOf()
+}
+```
+
+**From:** `packages/nuqs/src/parsers.ts:275-277`
+
+### parseAsTimestamp
+
+Parses Unix timestamps (milliseconds since epoch).
+
+```typescript
+export const parseAsTimestamp: SingleParserBuilder<Date>
+```
+
+**Implementation:**
+```typescript
+export const parseAsTimestamp: SingleParserBuilder<Date> = createParser({
+  parse: v => {
+    const ms = parseInt(v)
+    return ms == ms ? new Date(ms) : null // NaN check at low bundle size cost
+  },
+  serialize: (v: Date) => '' + v.valueOf(),
+  eq: compareDates
+})
+```
+
+**From:** `packages/nuqs/src/parsers.ts:283-290`
+
+**Usage:**
+```typescript
+const [created, setCreated] = useQueryState('created', parseAsTimestamp)
+// URL: ?created=1704067200000
+// State: Date(2024-01-01T00:00:00.000Z)
+
+setCreated(new Date('2024-06-15'))
+// URL: ?created=1718409600000
+```
+
+**Behavior:**
+- **Parse:** Converts millisecond timestamp to `Date` object
+- **Serialize:** Converts `Date` to milliseconds with `valueOf()`
+- **Invalid input:** `''`, `'abc'` → `null`
+
+---
+
+### parseAsIsoDateTime
+
+Parses ISO-8601 datetime strings with timezone.
+
+```typescript
+export const parseAsIsoDateTime: SingleParserBuilder<Date>
+```
+
+**Implementation:**
+```typescript
+export const parseAsIsoDateTime: SingleParserBuilder<Date> = createParser({
+  parse: v => {
+    const date = new Date(v)
+    // NaN check at low bundle size cost
+    return date.valueOf() == date.valueOf() ? date : null
+  },
+  serialize: (v: Date) => v.toISOString(),
+  eq: compareDates
+})
+```
+
+**From:** `packages/nuqs/src/parsers.ts:296-304`
+
+**Usage:**
+```typescript
+const [due, setDue] = useQueryState('due', parseAsIsoDateTime)
+// URL: ?due=2024-01-01T12:30:00.000Z
+// State: Date(2024-01-01T12:30:00.000Z)
+
+setDue(new Date())
+// URL: ?due=2024-03-03T10:15:30.123Z (full ISO string)
+```
+
+**Behavior:**
+- **Parse:** Uses `new Date(v)` constructor, returns `null` for invalid dates
+- **Serialize:** Uses `toISOString()` for full precision with timezone
+- **Invalid input:** `''`, `'not-a-date'` → `null`
+
+---
+
+### parseAsIsoDate
+
+Parses ISO-8601 date strings (YYYY-MM-DD) without time.
+
+```typescript
+export const parseAsIsoDate: SingleParserBuilder<Date>
+```
+
+**Implementation:**
+```typescript
+export const parseAsIsoDate: SingleParserBuilder<Date> = createParser({
+  parse: v => {
+    const date = new Date(v.slice(0, 10))
+    // NaN check at low bundle size cost
+    return date.valueOf() == date.valueOf() ? date : null
+  },
+  serialize: (v: Date) => v.toISOString().slice(0, 10),
+  eq: compareDates
+})
+```
+
+**From:** `packages/nuqs/src/parsers.ts:314-322`
+
+**Usage:**
+```typescript
+const [startDate, setStartDate] = useQueryState('start', parseAsIsoDate)
+// URL: ?start=2024-01-01
+// State: Date(2024-01-01T00:00:00.000Z) (at 00:00 UTC)
+
+setStartDate(new Date('2024-06-15T14:30:00'))
+// URL: ?start=2024-06-15 (time stripped)
+```
+
+**Behavior:**
+- **Parse:** Takes first 10 characters (YYYY-MM-DD), creates Date at 00:00:00 UTC
+- **Serialize:** Extracts date portion from ISO string
+- **Invalid input:** `''`, `'not-a-date'` → `null`
+
+---
+
+## Enum & Literal Parsers
+
+### parseAsStringEnum
+
+Parses string-based TypeScript enums.
+
+```typescript
+export function parseAsStringEnum<Enum extends string>(
+  validValues: Enum[]
+): SingleParserBuilder<Enum>
+```
+
+**Implementation:**
+```typescript
+export function parseAsStringEnum<Enum extends string>(
+  validValues: Enum[]
+): SingleParserBuilder<Enum> {
+  // Delegate implementation to parseAsStringLiteral to avoid duplication.
+  return parseAsStringLiteral(validValues as readonly Enum[])
+}
+```
+
+**From:** `packages/nuqs/src/parsers.ts:351-356`
+
+**Usage:**
+```typescript
+enum Direction {
+  up = 'UP',
+  down = 'DOWN',
+  left = 'LEFT',
+  right = 'RIGHT'
+}
+
+const [direction, setDirection] = useQueryState(
+  'direction',
+  parseAsStringEnum<Direction>(Object.values(Direction))
+    .withDefault(Direction.up)
+)
+// URL: ?direction=UP
+// State: Direction.up
+
+setDirection(Direction.left)
+// URL: ?direction=LEFT
+```
+
+**Behavior:**
+- **Parse:** Returns value if it matches one of `validValues`, otherwise `null`
+- **Serialize:** Uses `String()` on the enum value
+- **Invalid input:** Values not in `validValues` → `null`
+
+---
+
+### parseAsStringLiteral
+
+Parses string literal unions.
+
+```typescript
+export function parseAsStringLiteral<const Literal extends string>(
+  validValues: readonly Literal[]
+): SingleParserBuilder<Literal>
+```
+
+**Implementation:**
+```typescript
+export function parseAsStringLiteral<const Literal extends string>(
+  validValues: readonly Literal[]
+): SingleParserBuilder<Literal> {
+  return createParser({
+    parse: (query: string) => {
+      const asConst = query as unknown as Literal
+      return validValues.includes(asConst) ? asConst : null
+    },
+    serialize: String
+  })
+}
+```
+
+**From:** `packages/nuqs/src/parsers.ts:377-387`
+
+**Usage:**
+```typescript
+const colors = ['red', 'green', 'blue'] as const
+
+const [color, setColor] = useQueryState(
+  'color',
+  parseAsStringLiteral(colors).withDefault('red')
+)
+// Type: 'red' | 'green' | 'blue'
+
+// URL: ?color=green
+// State: 'green'
+
+// URL: ?color=yellow
+// State: 'red' (invalid, uses default)
+```
+
+**Behavior:**
+- **Parse:** Returns value if in `validValues`, otherwise `null`
+- **Serialize:** Uses `String()` on the literal
+- **Type safety:** Requires `as const` assertion for proper type inference
+
+---
+
+### parseAsNumberLiteral
+
+Parses number literal unions.
+
+```typescript
+export function parseAsNumberLiteral<const Literal extends number>(
+  validValues: readonly Literal[]
+): SingleParserBuilder<Literal>
+```
+
+**Implementation:**
+```typescript
+export function parseAsNumberLiteral<const Literal extends number>(
+  validValues: readonly Literal[]
+): SingleParserBuilder<Literal> {
+  return createParser({
+    parse: (query: string) => {
+      const asConst = parseFloat(query) as unknown as Literal
+      if (validValues.includes(asConst)) {
+        return asConst
+      }
+      return null
+    },
+    serialize: String
+  })
+}
+```
+
+**From:** `packages/nuqs/src/parsers.ts:408-421`
+
+**Usage:**
+```typescript
+const diceSides = [1, 2, 3, 4, 5, 6] as const
+
+const [side, setSide] = useQueryState(
+  'side',
+  parseAsNumberLiteral(diceSides).withDefault(4)
+)
+// Type: 1 | 2 | 3 | 4 | 5 | 6
+
+// URL: ?side=3
+// State: 3
+
+// URL: ?side=7
+// State: 4 (invalid, uses default)
+```
+
+**Behavior:**
+- **Parse:** Uses `parseFloat()`, returns value if in `validValues`, otherwise `null`
+- **Serialize:** Uses `String()` on the number
+- **Type safety:** Requires `as const` assertion
+
+---
+
+## Collection Parsers
+
+### parseAsArrayOf
+
+Parses comma-separated arrays with URI encoding.
+
+```typescript
+export function parseAsArrayOf<ItemType>(
+  itemParser: SingleParser<ItemType>,
+  separator = ','
+): SingleParserBuilder<ItemType[]>
+```
+
+**Implementation:**
+```typescript
+export function parseAsArrayOf<ItemType>(
+  itemParser: SingleParser<ItemType>,
+  separator = ','
+): SingleParserBuilder<ItemType[]> {
+  const itemEq = itemParser.eq ?? ((a: ItemType, b: ItemType) => a === b)
+  const encodedSeparator = encodeURIComponent(separator)
+  
+  return createParser({
+    parse: query => {
+      if (query === '') {
+        // Empty query should not go through the split/map/filter logic
+        return [] as ItemType[]
+      }
+      return query
+        .split(separator)
+        .map((item, index) =>
+          safeParse(
+            itemParser.parse,
+            item.replaceAll(encodedSeparator, separator),
+            `[${index}]`
+          )
+        )
+        .filter(value => value !== null && value !== undefined) as ItemType[]
+    },
+    serialize: values =>
+      values
+        .map<string>(value => {
+          const str = itemParser.serialize
+            ? itemParser.serialize(value)
+            : String(value)
+          return str.replaceAll(separator, encodedSeparator)
+        })
+        .join(separator),
+    eq(a, b) {
+      if (a === b) {
+        return true // Referentially stable
+      }
+      if (a.length !== b.length) {
+        return false
+      }
+      return a.every((value, index) => itemEq(value, b[index]!))
+    }
+  })
+}
+```
+
+**From:** `packages/nuqs/src/parsers.ts:466-510`
+
+**Usage:**
+```typescript
+const [tags, setTags] = useQueryState(
+  'tags',
+  parseAsArrayOf(parseAsString)
+)
+// URL: ?tags=react,next,typescript
+// State: ['react', 'next', 'typescript']
+
+setTags(['hello,world', 'foo'])
+// URL: ?tags=hello%2Cworld,foo (separator encoded)
+
+// Custom separator
+const [ids, setIds] = useQueryState(
+  'ids',
+  parseAsArrayOf(parseAsInteger, '|')
+)
+// URL: ?ids=1|2|3
+// State: [1, 2, 3]
+```
+
+**Behavior:**
+- **Parse:** Splits by separator, parses each item, filters out `null` values
+- **Serialize:** Serializes each item, URI-encodes separator characters, joins
+- **Invalid items:** Filtered out (array contains only valid items)
+- **Empty array:** Serializes to empty string `''`
+
+---
+
+### parseAsNativeArrayOf
+
+Parses native array query parameters (e.g., `?tag=a&tag=b&tag=c`).
+
+```typescript
+export function parseAsNativeArrayOf<ItemType>(
+  itemParser: SingleParser<ItemType>
+): ReturnType<MultiParserBuilder<ItemType[]>['withDefault']>
+```
+
+**Implementation:**
+```typescript
+export function parseAsNativeArrayOf<ItemType>(
+  itemParser: SingleParser<ItemType>
+): ReturnType<MultiParserBuilder<ItemType[]>['withDefault']> {
+  const itemEq = itemParser.eq ?? ((a: ItemType, b: ItemType) => a === b)
+  return createMultiParser({
+    parse: query => {
+      const parsed = query
+        .map((item, index) => safeParse(itemParser.parse, item, `[${index}]`))
+        .filter(value => value !== null && value !== undefined) as ItemType[]
+      return parsed.length === 0 ? null : parsed
+    },
+    serialize: values => {
+      const safeValues = Array.isArray(values) ? values : [values]
+      return safeValues.flatMap(value => {
+        const serialized = itemParser.serialize?.(value) ?? String(value)
+        return typeof serialized === 'string' ? [serialized] : [...serialized]
+      })
+    },
+    eq(a, b) {
+      if (a === b) {
+        return true // Referentially stable
+      }
+      if (a.length !== b.length) {
+        return false
+      }
+      return a.every((value, index) => itemEq(value, b[index]!))
+    }
+  }).withDefault([])
+}
+```
+
+**From:** `packages/nuqs/src/parsers.ts:512-541`
+
+**Usage:**
+```typescript
+const [categories, setCategories] = useQueryState(
+  'category',
+  parseAsNativeArrayOf(parseAsString)
+)
+// URL: ?category=electronics&category=books&category=toys
+// State: ['electronics', 'books', 'toys']
+
+setCategories(['a', 'b'])
+// URL: ?category=a&category=b
+
+// With integers
+const [userIds, setUserIds] = useQueryState(
+  'userId',
+  parseAsNativeArrayOf(parseAsInteger)
+)
+// URL: ?userId=1&userId=2&userId=3
+// State: [1, 2, 3]
+```
+
+**Behavior:**
+- **Parse:** Parses array of query values, filters out `null`, returns `null` if empty
+- **Serialize:** Returns array of strings for repeated parameters
+- **Default:** Always includes `.withDefault([])` for non-nullable arrays
+- **Invalid items:** Filtered out
+
+---
+
+## JSON Parser
+
+### parseAsJson
+
+Parses JSON-encoded objects with optional runtime validation.
+
+```typescript
+export function parseAsJson<T>(
+  validator: ((value: unknown) => T | null) | StandardSchemaV1<T>
+): SingleParserBuilder<T>
+```
+
+**Implementation:**
+```typescript
+export function parseAsJson<T>(
+  validator: ((value: unknown) => T | null) | StandardSchemaV1<T>
+): SingleParserBuilder<T> {
+  return createParser({
+    parse: query => {
+      try {
+        const obj = JSON.parse(query)
+        if ('~standard' in validator) {
+          const result = validator['~standard'].validate(obj)
+          if (result instanceof Promise) {
+            throw new Error(
+              '[nuqs] Only synchronous Standard Schemas are supported in parseAsJson.'
+            )
+          }
+          return result.issues ? null : result.value
+        }
+        return validator(obj)
+      } catch {
+        return null
+      }
+    },
+    serialize: value => JSON.stringify(value),
+    eq(a, b) {
+      // Check for referential equality first
+      return a === b || JSON.stringify(a) === JSON.stringify(b)
+    }
+  })
+}
+```
+
+**From:** `packages/nuqs/src/parsers.ts:430-457`
+
+**Usage:**
+
+```typescript
+import { parseAsJson } from 'nuqs'
+import { z } from 'zod'
+
+const pointSchema = z.object({
+  x: z.number(),
+  y: z.number()
+})
+
+// With Zod schema (Standard Schema support)
+const [point, setPoint] = useQueryState(
+  'point',
+  parseAsJson(pointSchema)
+)
+// URL: ?point=%7B%22x%22%3A10%2C%22y%22%3A20%7D
+// State: { x: 10, y: 20 }
+
+// With custom validator function
+type Point = { x: number; y: number }
+const [point, setPoint] = useQueryState(
+  'point',
+  parseAsJson<Point>((value: unknown) => {
+    if (
+      typeof value === 'object' &&
+      value !== null &&
+      'x' in value &&
+      'y' in value
+    ) {
+      return value as Point
+    }
+    return null
+  })
+)
+
+setPoint({ x: 100, y: 200 })
+// URL updated with URL-encoded JSON
+```
+
+**Behavior:**
+- **Parse:** Parses JSON, validates with schema/function, returns `null` on error
+- **Serialize:** Uses `JSON.stringify()`
+- **Equality:** Compares referential equality first, then serialized JSON
+- **Validation:** Supports Standard Schema (Zod, Valibot, ArkType) or custom functions
+- **Invalid input:** Malformed JSON or validation failure → `null`
+
+<Warning>
+Always validate JSON data with a schema library. Unvalidated JSON can introduce type safety issues.
+</Warning>
+
+---
+
+## Next Steps
+
+- [createParser API](/api/parsers/create-parser) - Build your own custom parsers
+- [Parser System Overview](/api/parsers/overview) - Understand parser architecture
+- [Parser Concepts](/concepts/parsers) - Higher-level usage patterns

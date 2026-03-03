@@ -1,0 +1,221 @@
+---
+title: "Installation"
+description: "Install nuqs and set up your framework adapter"
+---
+
+## Install the Package
+
+Install nuqs using your preferred package manager:
+
+<CodeGroup>
+
+```bash npm
+npm install nuqs
+```
+
+```bash pnpm
+pnpm add nuqs
+```
+
+```bash yarn
+yarn add nuqs
+```
+
+```bash bun
+bun add nuqs
+```
+
+</CodeGroup>
+
+<Note>
+  nuqs requires React 18.2.0 or higher. For Next.js, version 14.2.0+ is required.
+</Note>
+
+## Set Up Your Adapter
+
+nuqs requires a framework adapter to be wrapped around your React component tree. Choose the adapter that matches your framework:
+
+### Next.js (App Router)
+
+<Tip>
+  Recommended for Next.js 14.2.0 and above with the app directory.
+</Tip>
+
+Wrap your application with the `NuqsAdapter` in your root layout:
+
+```tsx src/app/layout.tsx
+import { NuqsAdapter } from 'nuqs/adapters/next/app'
+import { type ReactNode } from 'react'
+
+export default function RootLayout({ children }: { children: ReactNode }) {
+  return (
+    <html>
+      <body>
+        <NuqsAdapter>{children}</NuqsAdapter>
+      </body>
+    </html>
+  )
+}
+```
+
+### Next.js (Pages Router)
+
+Wrap your application in `_app.tsx`:
+
+```tsx src/pages/_app.tsx
+import type { AppProps } from 'next/app'
+import { NuqsAdapter } from 'nuqs/adapters/next/pages'
+
+export default function MyApp({ Component, pageProps }: AppProps) {
+  return (
+    <NuqsAdapter>
+      <Component {...pageProps} />
+    </NuqsAdapter>
+  )
+}
+```
+
+### React (SPA)
+
+For plain React applications (Vite, Create React App, etc.):
+
+```tsx src/main.tsx
+import { createRoot } from 'react-dom/client'
+import { NuqsAdapter } from 'nuqs/adapters/react'
+import App from './App'
+
+createRoot(document.getElementById('root')!).render(
+  <NuqsAdapter>
+    <App />
+  </NuqsAdapter>
+)
+```
+
+### Remix
+
+<Note>
+  Requires @remix-run/react version 2 or higher.
+</Note>
+
+Wrap your application in the root route:
+
+```tsx app/root.tsx
+import { NuqsAdapter } from 'nuqs/adapters/remix'
+import { Outlet } from '@remix-run/react'
+
+export default function App() {
+  return (
+    <NuqsAdapter>
+      <Outlet />
+    </NuqsAdapter>
+  )
+}
+```
+
+### React Router v6
+
+<Note>
+  Requires react-router-dom version 6.
+</Note>
+
+```tsx src/main.tsx
+import { NuqsAdapter } from 'nuqs/adapters/react-router/v6'
+import { createBrowserRouter, RouterProvider } from 'react-router-dom'
+import App from './App'
+
+const router = createBrowserRouter([
+  {
+    path: '/',
+    element: <App />
+  }
+])
+
+export function Root() {
+  return (
+    <NuqsAdapter>
+      <RouterProvider router={router} />
+    </NuqsAdapter>
+  )
+}
+```
+
+### React Router v7
+
+Wrap your application in the root route:
+
+```tsx app/root.tsx
+import { NuqsAdapter } from 'nuqs/adapters/react-router/v7'
+import { Outlet } from 'react-router'
+
+export default function App() {
+  return (
+    <NuqsAdapter>
+      <Outlet />
+    </NuqsAdapter>
+  )
+}
+```
+
+### TanStack Router
+
+<Warning>
+  TanStack Router support is experimental and does not yet cover TanStack Start.
+</Warning>
+
+```tsx src/routes/__root.tsx
+import { NuqsAdapter } from 'nuqs/adapters/tanstack-router'
+import { Outlet, createRootRoute } from '@tanstack/react-router'
+
+export const Route = createRootRoute({
+  component: () => (
+    <NuqsAdapter>
+      <Outlet />
+    </NuqsAdapter>
+  )
+})
+```
+
+### Custom Adapter
+
+If you're using a different router or framework, you can create a custom adapter. See the [Custom Adapter](/adapters/custom) guide for details.
+
+## Verify Installation
+
+You're all set! Let's verify everything works by creating a simple component:
+
+```tsx 'use client' // Only needed for Next.js App Router
+import { useQueryState } from 'nuqs'
+
+export default function TestComponent() {
+  const [test, setTest] = useQueryState('test')
+  return (
+    <div>
+      <p>Value: {test || 'none'}</p>
+      <button onClick={() => setTest('hello')}>Set Test</button>
+      <button onClick={() => setTest(null)}>Clear</button>
+    </div>
+  )
+}
+```
+
+Click the "Set Test" button and watch the URL update with `?test=hello`!
+
+## Next Steps
+
+<CardGroup cols={2}>
+  <Card title="Quick Start" icon="rocket" href="/quickstart">
+    Build your first component with nuqs
+  </Card>
+  
+  <Card title="Framework Adapters" icon="plug" href="/concepts/adapters">
+    Learn more about adapters and how they work
+  </Card>
+  
+  <Card title="Parsers" icon="filter" href="/concepts/parsers">
+    Explore built-in parsers for type-safe state
+  </Card>
+  
+  <Card title="API Reference" icon="code" href="/api/use-query-state">
+    Dive into the complete API documentation
+  </Card>
+</CardGroup>

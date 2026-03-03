@@ -1,0 +1,463 @@
+---
+title: "Options"
+description: "Configure how URL updates behave with history, shallow, throttling, and transitions"
+---
+
+## Overview
+
+Options control how nuqs updates the URL and interacts with your framework's routing system. They can be set at three levels:
+
+1. **Hook level** - applies to all state updates for that hook
+2. **Parser level** - using `.withOptions()` on a parser
+3. **Update level** - passed to individual `setState` calls (overrides hook/parser options)
+
+```typescript
+// Hook level
+const [count, setCount] = useQueryState('count', {
+  history: 'push'
+})
+
+// Parser level
+const [query, setQuery] = useQueryState(
+  'q',
+  parseAsString.withOptions({ history: 'push' })
+)
+
+// Update level (overrides hook/parser options)
+setCount(42, { history: 'replace' })
+```
+
+## Available options
+
+All options are defined in `packages/nuqs/src/defs.ts:9-90`:
+
+```typescript
+type Options = {
+  history?: 'replace' | 'push'
+  scroll?: boolean
+  shallow?: boolean
+  throttleMs?: number // deprecated
+  limitUrlUpdates?: LimitUrlUpdates
+  startTransition?: TransitionStartFunction
+  clearOnDefault?: boolean
+}
+```
+
+## history
+
+Controls how URL updates affect browser history.
+
+```typescript
+history?: 'replace' | 'push'
+```
+
+**Default:** `'replace'`
+
+### `replace` (default)
+
+Replaces the current history entry. Multiple state updates are "squashed" into a single history point:
+
+```typescript
+const [count, setCount] = useQueryState('count', parseAsInteger)
+
+setCount(1) // URL: ?count=1
+setCount(2) // URL: ?count=2
+setCount(3) // URL: ?count=3
+
+// Clicking back button goes to the page before any count changes
+```
+
+This is ideal for:
+- Search/filter controls
+- Pagination
+- Any state that shouldn't clutter history
+
+### `push`
+
+Creates a new history entry for each update. Users can navigate state changes with back/forward buttons:
+
+```typescript
+const [step, setStep] = useQueryState('step', {
+  history: 'push'
+})
+
+setStep(1) // URL: ?step=1
+setStep(2) // URL: ?step=2
+setStep(3) // URL: ?step=3
+
+// Clicking back goes: ?step=3 → ?step=2 → ?step=1
+```
+
+This is ideal for:
+- Multi-step forms/wizards
+- Tab navigation
+- State that represents distinct "pages"
+
+### Override per update
+
+```typescript
+const [query, setQuery] = useQueryState('q', { history: 'push' })
+
+// This specific update uses replace instead of push
+setQuery(null, { history: 'replace' })
+```
+
+From `packages/nuqs/src/defs.ts:10-18` and README.
+
+## shallow
+
+<Note>
+This option only applies to Next.js. Other frameworks ignore it.
+</Note>
+
+Controls whether URL updates notify the server.
+
+```typescript
+shallow?: boolean
+```
+
+**Default:** `true`
+
+### `true` (default) - Client-only updates
+
+URL updates stay on the client. No network requests are made:
+
+```typescript
+const [filter, setFilter] = useQueryState('filter') // shallow: true by default
+
+setFilter('active')
+// ✅ URL updates instantly
+// ✅ No re-render of Server Components
+// ✅ No network request
+```
+
+This is the recommended default for:
+- UI state (filters, sorting, pagination)
+- Interactive controls
+- Client-side only features
+
+### `false` - Server updates
+
+URL updates trigger a server request and re-render Server Components:
+
+```typescript
+const [filter, setFilter] = useQueryState('filter', {
+  shallow: false
+})
+
+setFilter('active')
+// ✅ URL updates
+// ✅ Server Components re-render with new searchParams
+// ⚠️ Network request to server
+```
+
+This is needed when:
+- Server Components depend on the search param
+- You need to re-fetch data based on URL state
+- SEO requires server-rendered content
+
+From `packages/nuqs/src/defs.ts:27-34` and README.
+
+## scroll
+
+Controls whether the page scrolls to top after a URL update.
+
+```typescript
+scroll?: boolean
+```
+
+**Default:** `false`
+
+```typescript
+const [page, setPage] = useQueryState('page', parseAsInteger.withOptions({
+  scroll: true
+}))
+
+setPage(2) // URL updates and page scrolls to top
+```
+
+<Note>
+Unlike Next.js router's navigation methods which scroll by default, nuqs defaults to `false` to preserve the user's scroll position.
+</Note>
+
+From `packages/nuqs/src/defs.ts:20-25`.
+
+## throttleMs (deprecated)
+
+<Warning>
+Deprecated in favor of `limitUrlUpdates`. Use `throttle()` helper instead.
+</Warning>
+
+```typescript
+throttleMs?: number
+```
+
+Limits how frequently the URL is updated (in milliseconds).
+
+```typescript
+// ❌ Deprecated
+useQueryState('query', { throttleMs: 1000 })
+
+// ✅ Use instead
+import { throttle } from 'nuqs'
+
+useQueryState('query', { limitUrlUpdates: throttle(1000) })
+```
+
+From `packages/nuqs/src/defs.ts:37-53`.
+
+## limitUrlUpdates
+
+Controls rate limiting of URL updates to prevent browser history API throttling.
+
+```typescript
+limitUrlUpdates?: LimitUrlUpdates
+
+type LimitUrlUpdates =
+  | { method: 'debounce'; timeMs: number }
+  | { method: 'throttle'; timeMs: number }
+```
+
+**Default:** `throttle(50)` (or `throttle(120)` for Safari)
+
+### Why rate limiting?
+
+Browsers rate-limit the History API to prevent abuse:
+- **Chrome/Firefox**: ~50 updates/second is safe
+- **Safari 17+**: max 100 updates per 10 seconds (~120ms throttle recommended)
+- **Safari &lt;17**: max 100 updates per 30 seconds (~320ms throttle recommended)
+
+nuqs automatically detects Safari and adjusts the default:
+
+```typescript
+// From packages/nuqs/src/lib/queues/rate-limiting.ts:6-20
+function getDefaultThrottle() {
+  if (typeof window === 'undefined') return 50
+  const isSafari = Boolean(window.GestureEvent)
+  if (!isSafari) {
+    return 50
+  }
+  try {
+    const match = navigator.userAgent?.match(/version\/([\d\.]+) safari/i)
+    return parseFloat(match![1]!) >= 17 ? 120 : 320
+  } catch {
+    return 320
+  }
+}
+```
+
+### Throttle
+
+Ensures a maximum update frequency. State updates are immediate; only URL updates are throttled:
+
+```typescript
+import { throttle } from 'nuqs'
+
+const [query, setQuery] = useQueryState('q', {
+  limitUrlUpdates: throttle(1000) // Max 1 URL update per second
+})
+
+setQuery('a') // State: 'a', URL updates immediately
+setQuery('ab') // State: 'ab', URL update queued
+setQuery('abc') // State: 'abc', URL update queued
+// After 1000ms: URL updates once to ?q=abc
+```
+
+<Note>
+State updates are **always instant** to keep UI responsive. Only URL/server updates are throttled.
+</Note>
+
+### Debounce
+
+Waits for a pause in updates before applying to URL:
+
+```typescript
+import { debounce } from 'nuqs'
+
+const [query, setQuery] = useQueryState('q', {
+  shallow: false,
+  limitUrlUpdates: debounce(500) // Wait 500ms of no changes
+})
+
+// User types "hello" quickly
+setQuery('h')    // State: 'h',  no URL update yet
+setQuery('he')   // State: 'he',  debounce timer resets
+setQuery('hel')  // State: 'hel',  debounce timer resets
+setQuery('hell') // State: 'hell',  debounce timer resets
+setQuery('hello') // State: 'hello',  debounce timer resets
+// After 500ms of no typing: URL updates to ?q=hello
+```
+
+Debouncing is ideal for:
+- Search inputs (avoid server requests on every keystroke)
+- Expensive operations
+- Any high-frequency updates
+
+### Override per update
+
+```typescript
+const [query, setQuery] = useQueryState('q', {
+  limitUrlUpdates: throttle(100)
+})
+
+// Force immediate update
+setQuery('important', { limitUrlUpdates: throttle(0) })
+```
+
+<Warning>
+Values lower than 50ms are ignored to prevent rate-limiting issues.
+</Warning>
+
+From `packages/nuqs/src/defs.ts:55-68` and README.
+
+## startTransition
+
+Enables React 18+ transitions for loading states during server updates.
+
+```typescript
+startTransition?: TransitionStartFunction
+```
+
+<Note>
+Only useful when combined with `shallow: false` in Next.js, or for wrapping navigation events in other frameworks.
+</Note>
+
+### Usage with useTransition
+
+```typescript
+'use client'
+
+import React from 'react'
+import { useQueryState, parseAsString } from 'nuqs'
+
+function ServerDataComponent() {
+  // 1. Create transition
+  const [isLoading, startTransition] = React.useTransition()
+  
+  // 2. Pass startTransition to parser options
+  const [query, setQuery] = useQueryState(
+    'query',
+    parseAsString.withOptions({
+      startTransition,
+      shallow: false // Must be false to trigger server updates
+    })
+  )
+  
+  // 3. Use isLoading to show loading states
+  if (isLoading) {
+    return <div>Loading...</div>
+  }
+  
+  return (
+    <input 
+      value={query ?? ''} 
+      onChange={e => setQuery(e.target.value)}
+    />
+  )
+}
+```
+
+### How it works
+
+When you update state:
+
+1. React state updates immediately (optimistic)
+2. URL updates (throttled)
+3. Server Components re-render with new searchParams
+4. `isLoading` is `true` while server is responding
+5. Client receives RSC payload and updates
+
+This enables:
+- Loading spinners during server updates
+- Optimistic UI updates
+- Pending states for async operations
+
+From `packages/nuqs/src/defs.ts:70-78` and README.
+
+## clearOnDefault
+
+Controls whether setting state to the default value clears it from the URL.
+
+```typescript
+clearOnDefault?: boolean
+```
+
+**Default:** `true`
+
+When a parser has a default value, setting state to that default removes the key from the URL:
+
+```typescript
+const [sort, setSort] = useQueryState(
+  'sort',
+  parseAsStringLiteral(['asc', 'desc'] as const).withDefault('asc')
+)
+
+setSort('desc') // URL: ?sort=desc
+setSort('asc')  // URL: (sort removed, back to default)
+```
+
+### Why default to true?
+
+Keeps URLs clean by not showing default values:
+
+```
+✅ Clean:   /products?filter=sale
+❌ Verbose: /products?filter=sale&sort=asc&page=1&limit=20
+```
+
+### When to use false
+
+Set to `false` when you need explicit URLs that don't change meaning if defaults change:
+
+```typescript
+const [version, setVersion] = useQueryState(
+  'v',
+  parseAsInteger.withDefault(1).withOptions({
+    clearOnDefault: false
+  })
+)
+
+setVersion(1) // URL: ?v=1 (explicit, even though it's the default)
+```
+
+This ensures URLs remain stable even if you change the default value in the future.
+
+From `packages/nuqs/src/defs.ts:80-89`.
+
+## Combining options
+
+You can combine multiple options for fine-grained control:
+
+```typescript
+import { throttle } from 'nuqs'
+
+const [search, setSearch] = useQueryState(
+  'q',
+  parseAsString.withOptions({
+    history: 'push',           // Each search creates history entry
+    shallow: false,            // Notify server
+    scroll: false,             // Don't scroll to top
+    limitUrlUpdates: throttle(500), // Max 2 updates/sec
+    clearOnDefault: true       // Remove ?q when empty
+  })
+)
+```
+
+## Option precedence
+
+When the same option is specified at multiple levels:
+
+```typescript
+const parser = parseAsString.withOptions({ history: 'push' })
+
+const [state, setState] = useQueryState('key', {
+  ...parser,
+  history: 'replace' // Hook level overrides parser level
+})
+
+setState('value', { 
+  history: 'push' // Update level overrides both
+})
+```
+
+**Precedence:** Update level > Hook level > Parser level > Default
